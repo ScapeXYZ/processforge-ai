@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ReadinessPanel } from "@/components/processforge/readiness-panel";
+import { SmartSuggestions } from "@/components/processforge/smart-suggestions";
 import { calculateReadinessScore } from "@/lib/readiness-score";
+import { getSmartSuggestions } from "@/lib/smart-suggestions";
 
 export type DetailLevel = "concise" | "standard" | "detailed";
 export type SopFormValues = { title: string; industry: string; department: string; description: string; audience: string; detailLevel: DetailLevel };
@@ -26,6 +28,7 @@ const fieldClass = "h-10 bg-background/60 px-3";
 export function SopForm({ values, onChange, onSubmit, isGenerated, isLoading, error }: { values: SopFormValues; onChange: (values: SopFormValues) => void; onSubmit: () => void; isGenerated: boolean; isLoading: boolean; error: string | null }) {
   const set = <K extends keyof SopFormValues>(key: K, value: SopFormValues[K]) => onChange({ ...values, [key]: value });
   const readiness = calculateReadinessScore(values);
+  const suggestions = getSmartSuggestions(values);
   return (
     <section className="p-4 sm:p-6 lg:p-7">
       <div className="mb-7"><p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-500">SOP brief</p><h1 className="mt-2 text-2xl font-semibold tracking-tight">Describe the process</h1><p className="mt-2 text-sm leading-6 text-muted-foreground">Give ProcessForge the operational context needed to build a useful first draft.</p></div>
@@ -39,6 +42,7 @@ export function SopForm({ values, onChange, onSubmit, isGenerated, isLoading, er
         <Field label="Target audience"><Input required value={values.audience} onChange={(e) => set("audience", e.target.value)} placeholder="e.g. Support agents and team leads" className={fieldClass} /></Field>
         <fieldset><legend className="mb-2 text-sm font-medium">Detail level</legend><div className="grid grid-cols-3 gap-2">{(["concise", "standard", "detailed"] as const).map((level) => <button key={level} type="button" onClick={() => set("detailLevel", level)} className={`rounded-lg border px-2 py-2.5 text-sm capitalize transition-colors ${values.detailLevel === level ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-400" : "border-border bg-background/60 text-muted-foreground hover:text-foreground"}`}>{level}</button>)}</div></fieldset>
         <ReadinessPanel readiness={readiness} />
+        <SmartSuggestions analysis={suggestions} />
         {isLoading && <GenerationProgress />}
         {error && <div role="alert" className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-200">{error}</div>}
         <Button type="submit" size="lg" disabled={isLoading} className="mt-2 h-11 w-full bg-emerald-500 text-emerald-950 hover:bg-emerald-400 disabled:cursor-not-allowed">
