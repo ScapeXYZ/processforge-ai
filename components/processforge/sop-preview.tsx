@@ -9,6 +9,7 @@ import { exportSopPdf } from "@/lib/export-sop-pdf";
 import type { Sop } from "@/lib/sop-schema";
 import type { SopFormValues } from "./sop-form";
 import { calculateReadinessScore } from "@/lib/readiness-score";
+import { SopAiEditor } from "@/components/processforge/sop-ai-editor";
 
 export function generateMockSop(values: SopFormValues, revision = 1): Sop {
   const title = values.title.trim() || "Untitled process";
@@ -52,7 +53,7 @@ export function generateMockSop(values: SopFormValues, revision = 1): Sop {
 
 function sopToText(sop: Sop) { return [sop.title, `Document ID: ${sop.documentId} | Version: ${sop.version}`, "", "PURPOSE", sop.purpose, "", "SCOPE", sop.scope, "", "PROCEDURE", ...sop.procedureSteps.map((step) => `${step.stepNumber}. ${step.title}\nOwner: ${step.owner}\n${step.instruction}\nEvidence: ${step.evidence}`), "", "QUALITY CONTROL", ...sop.qualityChecklist.map((item) => `- ${item}`)].join("\n"); }
 
-export function SopPreview({ sop, source, onRegenerate, onClear, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; isLoading: boolean }) {
+export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; onSopChange: (sop: Sop) => void; isLoading: boolean }) {
   const [exporting, setExporting] = useState<"PDF" | "DOCX" | "JSON" | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const copy = async () => { if (sop) await navigator.clipboard.writeText(sopToText(sop)); };
@@ -102,6 +103,7 @@ export function SopPreview({ sop, source, onRegenerate, onClear, isLoading }: { 
         <Button variant="outline" size="sm" onClick={() => runExport("DOCX")} disabled={!sop || Boolean(exporting)}><Download /> DOCX</Button>
         <Button variant="outline" size="sm" onClick={() => runExport("JSON")} disabled={!sop || Boolean(exporting)}><FileJson /> JSON</Button>
       </div>
+      {sop && <SopAiEditor key={sop.documentId} sop={sop} onChange={onSopChange} disabled={isLoading} />}
     </section>
   );
 }
