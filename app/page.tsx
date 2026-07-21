@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import { WorkflowLogo } from "@/components/processforge/workflow-logo";
 
 const services = [
   {
@@ -56,31 +57,13 @@ const steps = [
   { number: "04", title: "Export", text: "Share a readable SOP or agent-ready JSON." },
 ];
 
-function ForgeMark({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      viewBox="0 0 120 120"
-      fill="none"
-      aria-hidden="true"
-      className={className}
-    >
-      <path d="M60 16v24M60 80v24M16 60h24M80 60h24" stroke="currentColor" strokeWidth="8" strokeLinecap="round" />
-      <rect x="42" y="42" width="36" height="36" rx="8" stroke="currentColor" strokeWidth="8" />
-      <circle cx="60" cy="12" r="7" fill="currentColor" />
-      <circle cx="60" cy="108" r="7" fill="currentColor" />
-      <circle cx="12" cy="60" r="7" fill="currentColor" />
-      <circle cx="108" cy="60" r="7" fill="currentColor" />
-    </svg>
-  );
-}
-
 export default function Home() {
   return (
     <main className="min-h-screen overflow-hidden bg-background text-foreground">
       <nav className="relative z-20 border-b border-border/80" aria-label="Main navigation">
         <div className="mx-auto flex h-18 max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
           <a href="#" className="flex items-center gap-2.5 font-semibold tracking-tight" aria-label="ProcessForge AI home">
-            <ForgeMark className="size-7 text-emerald-500" />
+            <WorkflowLogo className="size-7 text-emerald-500" />
             <span>ProcessForge <span className="text-muted-foreground">AI</span></span>
           </a>
 
@@ -93,7 +76,7 @@ export default function Home() {
           <Button
             size="sm"
             nativeButton={false}
-            render={<a href="#create" />}
+            render={<a href="/create" />}
             className="bg-emerald-500 text-emerald-950 hover:bg-emerald-400"
           >
             Create SOP <ArrowRight className="size-3.5" />
@@ -102,7 +85,7 @@ export default function Home() {
       </nav>
 
       <section id="create" className="relative border-b border-border/80">
-        <ForgeMark className="pointer-events-none absolute left-1/2 top-1/2 size-[34rem] -translate-x-1/2 -translate-y-1/2 text-foreground opacity-[0.04] sm:size-[46rem]" />
+        <WorkflowLogo className="pointer-events-none absolute left-1/2 top-1/2 size-[34rem] -translate-x-1/2 -translate-y-1/2 text-foreground opacity-[0.04] sm:size-[46rem]" />
         <div className="relative z-10 mx-auto flex max-w-5xl flex-col items-center px-5 py-20 text-center sm:px-8 sm:py-28 lg:py-32">
           <Badge variant="outline" className="mb-6 border-emerald-500/30 bg-emerald-500/5 px-3 py-1 text-emerald-400">
             <Sparkles className="mr-1.5 size-3.5" /> Professional workflow intelligence
@@ -118,7 +101,9 @@ export default function Home() {
 
           <Card id="product" className="mt-10 w-full border-border bg-card text-left shadow-2xl shadow-black/20 sm:mt-12">
             <CardContent className="p-3 sm:p-4">
+              <form action="/create" method="get">
               <Textarea
+                name="description"
                 aria-label="Describe the process you want to document"
                 placeholder="Describe the process you want to document. Example: Create a customer refund SOP for an online store."
                 className="min-h-36 resize-none border-0 bg-transparent p-3 text-base leading-7 shadow-none placeholder:text-muted-foreground/70 focus-visible:ring-0 sm:min-h-40"
@@ -129,12 +114,13 @@ export default function Home() {
                   Purpose <span className="text-border">•</span> Roles <span className="text-border">•</span> Steps <span className="text-border">•</span> Checklist <span className="text-border">•</span> Training quiz
                 </p>
                 <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1 sm:flex-none">View example</Button>
-                  <Button className="flex-1 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 sm:flex-none">
+                  <Button nativeButton={false} render={<a href="/create?example=refund" />} variant="outline" className="flex-1 sm:flex-none">View example</Button>
+                  <Button type="submit" className="flex-1 bg-emerald-500 text-emerald-950 hover:bg-emerald-400 sm:flex-none">
                     Generate SOP <ArrowRight className="size-4" />
                   </Button>
                 </div>
               </div>
+              </form>
             </CardContent>
           </Card>
         </div>
@@ -202,7 +188,7 @@ export default function Home() {
       <footer>
         <div className="mx-auto flex max-w-7xl flex-col gap-4 px-5 py-8 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
           <div className="flex items-center gap-2.5 font-semibold">
-            <ForgeMark className="size-6 text-emerald-500" /> ProcessForge AI
+            <WorkflowLogo className="size-6 text-emerald-500" /> ProcessForge AI
           </div>
           <p className="text-sm text-muted-foreground">Built for reliable business execution.</p>
         </div>
