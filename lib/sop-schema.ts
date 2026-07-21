@@ -10,7 +10,8 @@ export const sopRequestSchema = z.object({
   targetAudience: nonEmptyText,
   detailLevel: z.enum(["concise", "standard", "detailed"]),
   inputReadinessScore: z.number().int().min(0).max(100),
-}).strict();
+  knowledgeSources: z.array(z.object({ id: nonEmptyText, name: nonEmptyText, referenceText: z.string().max(12_000), truncated: z.boolean() }).strict()).max(10),
+}).strict().refine((request) => request.knowledgeSources.reduce((total, source) => total + source.referenceText.length, 0) <= 40_000, { message: "Knowledge reference content exceeds the safe prompt limit.", path: ["knowledgeSources"] });
 
 export const sopSchema = z.object({
   title: nonEmptyText,
@@ -55,7 +56,24 @@ export const sopSchema = z.object({
     }).strict()),
     escalationConditions: z.array(nonEmptyText),
   }).strict(),
+  knowledgeSources: z.object({
+    documentIds: z.array(nonEmptyText),
+    documentNames: z.array(nonEmptyText),
+    sourceNotes: z.object({
+      documentsUsed: z.array(nonEmptyText),
+      importantAssumptions: z.array(nonEmptyText),
+      missingInformation: z.array(nonEmptyText),
+      generalBestPracticesAdded: z.boolean(),
+    }).strict(),
+  }).strict(),
 }).strict();
 
 export type SopRequest = z.infer<typeof sopRequestSchema>;
 export type Sop = z.infer<typeof sopSchema>;
+
+export const emptyKnowledgeSources: Sop["knowledgeSources"] = { documentIds: [], documentNames: [], sourceNotes: { documentsUsed: [], importantAssumptions: [], missingInformation: [], generalBestPracticesAdded: true } };
+
+export function migrateSopSnapshot(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || "knowledgeSources" in value) return value;
+  return { ...value, knowledgeSources: emptyKnowledgeSources };
+}

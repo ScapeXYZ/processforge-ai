@@ -72,6 +72,13 @@ export function exportSopPdf(sop: Sop): void {
     quiz.options.forEach((option) => addBullet(option));
     addText(`Correct answer: ${quiz.correctAnswer}`, { size: 9, bold: true, indent: 4, after: 4 });
   });
+  addHeading("9. Source Notes");
+  addText(`Knowledge sources: ${sop.knowledgeSources.documentNames.length > 0 ? sop.knowledgeSources.documentNames.join(", ") : "None selected"}`);
+  addText("Important assumptions", { bold: true, color: [31, 77, 120], after: 2 });
+  (sop.knowledgeSources.sourceNotes.importantAssumptions.length > 0 ? sop.knowledgeSources.sourceNotes.importantAssumptions : ["No material assumptions recorded"]).forEach((item) => addBullet(item));
+  addText("Missing information", { bold: true, color: [31, 77, 120], after: 2 });
+  (sop.knowledgeSources.sourceNotes.missingInformation.length > 0 ? sop.knowledgeSources.sourceNotes.missingInformation : ["No missing information recorded"]).forEach((item) => addBullet(item));
+  addText(`General best practices added: ${sop.knowledgeSources.sourceNotes.generalBestPracticesAdded ? "Yes" : "No"}`);
 
   const pageCount = pdf.getNumberOfPages();
   for (let page = 1; page <= pageCount; page += 1) {

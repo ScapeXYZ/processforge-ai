@@ -25,7 +25,7 @@ const sections: Array<{ value: EditorSection; label: string }> = [
   { value: "entire", label: "Entire SOP" }, { value: "purpose", label: "Purpose" }, { value: "scope", label: "Scope" }, { value: "roles", label: "Roles and responsibilities" }, { value: "prerequisites", label: "Prerequisites" }, { value: "procedureSteps", label: "Procedure" }, { value: "escalationRules", label: "Escalation rules" }, { value: "qualityChecklist", label: "Quality checklist" }, { value: "trainingQuiz", label: "Training quiz" }, { value: "agentReadyJson", label: "Agent-ready JSON" },
 ];
 
-export function SopAiEditor({ sop, onChange, disabled }: { sop: Sop; onChange: (sop: Sop) => void; disabled: boolean }) {
+export function SopAiEditor({ sop, onChange, disabled }: { sop: Sop; onChange: (sop: Sop, changeSummary?: string) => void; disabled: boolean }) {
   const [prompt, setPrompt] = useState("");
   const [section, setSection] = useState<EditorSection>("entire");
   const [isEditing, setIsEditing] = useState(false);
@@ -48,7 +48,7 @@ export function SopAiEditor({ sop, onChange, disabled }: { sop: Sop; onChange: (
       const next = mergeEditedSection(sop, edited, section);
       setUndoStack((current) => [...current, sop]);
       setRedoStack([]);
-      onChange(next);
+      onChange(next, `AI Editor updated ${section === "entire" ? "the entire SOP" : sections.find((item) => item.value === section)?.label ?? section}: ${prompt.trim().slice(0, 140)}`);
       setMessage({ type: "success", text: section === "entire" ? "SOP updated successfully." : `${sections.find((item) => item.value === section)?.label} updated successfully.` });
     } catch (error) {
       setMessage({ type: "error", text: error instanceof Error ? error.message : "AI editing failed. Please retry." });
@@ -98,7 +98,7 @@ function EditorProgress() {
 }
 
 function preserveDocumentMetadata(original: Sop, edited: Sop): Sop {
-  return { ...edited, documentId: original.documentId, version: original.version, inputReadinessScore: original.inputReadinessScore, documentReadinessScore: original.documentReadinessScore, estimatedCompletionTime: original.estimatedCompletionTime };
+  return { ...edited, documentId: original.documentId, version: original.version, inputReadinessScore: original.inputReadinessScore, documentReadinessScore: original.documentReadinessScore, estimatedCompletionTime: original.estimatedCompletionTime, knowledgeSources: original.knowledgeSources };
 }
 
 function mergeEditedSection(original: Sop, edited: Sop, section: EditorSection): Sop {

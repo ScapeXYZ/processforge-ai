@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Clipboard, Download, FileJson, FileText, Info, RotateCcw, Sparkles, Trash2 } from "lucide-react";
+import { Check, Clipboard, Download, FileJson, FileText, Info, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportSopDocx } from "@/lib/export-sop-docx";
 import { exportSopJson } from "@/lib/export-sop-json";
 import { exportSopPdf } from "@/lib/export-sop-pdf";
-import type { Sop } from "@/lib/sop-schema";
+import { emptyKnowledgeSources, type Sop } from "@/lib/sop-schema";
 import type { SopFormValues } from "./sop-form";
 import { calculateReadinessScore } from "@/lib/readiness-score";
 import { SopAiEditor } from "@/components/processforge/sop-ai-editor";
@@ -48,14 +48,16 @@ export function generateMockSop(values: SopFormValues, revision = 1): Sop {
       { order: 5, action: "Quality-check the outcome", owner: "Process operator", evidence: "Completed quality check with no unresolved discrepancy" },
       { order: 6, action: "Communicate and close", owner: "Process operator", evidence: "Sent notification and closed case record" },
     ], escalationConditions: ["Missing required information", "Exception or risk exceeds documented authority"] },
+    knowledgeSources: emptyKnowledgeSources,
   };
 }
 
 function sopToText(sop: Sop) { return [sop.title, `Document ID: ${sop.documentId} | Version: ${sop.version}`, "", "PURPOSE", sop.purpose, "", "SCOPE", sop.scope, "", "PROCEDURE", ...sop.procedureSteps.map((step) => `${step.stepNumber}. ${step.title}\nOwner: ${step.owner}\n${step.instruction}\nEvidence: ${step.evidence}`), "", "QUALITY CONTROL", ...sop.qualityChecklist.map((item) => `- ${item}`)].join("\n"); }
 
-export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; onSopChange: (sop: Sop) => void; isLoading: boolean }) {
+export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, onSaveVersion, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; onSopChange: (sop: Sop, changeSummary?: string) => void; onSaveVersion: () => boolean; isLoading: boolean }) {
   const [exporting, setExporting] = useState<"PDF" | "DOCX" | "JSON" | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [versionMessage, setVersionMessage] = useState<string | null>(null);
   const copy = async () => { if (sop) await navigator.clipboard.writeText(sopToText(sop)); };
   const isAiEnhanced = Boolean(sop && sop.documentReadinessScore > sop.inputReadinessScore);
   const isSignificantlyEnhanced = Boolean(sop && sop.documentReadinessScore - sop.inputReadinessScore > 20);
@@ -81,12 +83,13 @@ export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, is
         <div className="flex gap-1">
           <Button variant="ghost" size="sm" onClick={copy} disabled={!sop}><Clipboard /> Copy</Button>
           <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={!sop || isLoading}><RotateCcw /> Regenerate</Button>
+          <Button variant="ghost" size="sm" onClick={() => { setVersionMessage(onSaveVersion() ? "Version saved." : "Could not save version."); }} disabled={!sop || isLoading}><Save /> Save version</Button>
           <Button variant="ghost" size="icon-sm" onClick={onClear} disabled={!sop || isLoading} aria-label="Clear SOP"><Trash2 /></Button>
         </div>
       </div>
       {!sop ? <EmptyPreview /> : <article className="max-h-none overflow-y-auto p-4 sm:p-6 lg:max-h-[calc(100vh-7.3rem)] lg:p-8">
         <div className="mx-auto max-w-3xl rounded-xl border border-border bg-background p-5 shadow-2xl shadow-black/10 sm:p-8">
-          <div className="border-b border-border pb-6"><div className="mb-4 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">Ready for review</span>{source && <span className="text-[10px] text-muted-foreground">{source === "ai" ? "Generated with AI" : "Local fallback"}</span>}</div><span className="font-mono text-[10px] text-muted-foreground">{sop.documentId}</span></div><h2 className="text-2xl font-semibold tracking-tight">{sop.title}</h2><div className="mt-5 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4"><Meta label="Input quality" value={`${sop.inputReadinessScore}%`} tooltip="Measures how complete and detailed your instructions are before AI generation." /><Meta label="SOP readiness" value={`${sop.documentReadinessScore}%`} accent tooltip="Measures the completeness and operational quality of the generated SOP. AI may improve missing details using industry best practices while preserving your intent." /><Meta label="Version" value={sop.version} /><Meta label="Est. time" value={sop.estimatedCompletionTime} /></div>{isAiEnhanced && <div className="mt-4 flex flex-wrap items-center gap-2"><Tooltip label="AI Enhanced" content="The AI expanded your instructions by adding structure, best practices, responsibilities, assumptions, checklists and training content."><span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400"><Sparkles className="size-3" /> AI Enhanced</span></Tooltip>{isSignificantlyEnhanced && <span className="text-[11px] text-emerald-300/80">AI significantly improved this SOP.</span>}</div>}</div>
+          <div className="border-b border-border pb-6"><div className="mb-4 flex items-center justify-between gap-3"><div className="flex flex-wrap items-center gap-2"><span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">Ready for review</span>{source && <span className="text-[10px] text-muted-foreground">{source === "ai" ? "Generated with AI" : "Local fallback"}</span>}{sop.knowledgeSources.documentNames.length > 0 && <span className="rounded-full border border-violet-500/20 bg-violet-500/10 px-2.5 py-1 text-[10px] text-violet-200">Grounded in {sop.knowledgeSources.documentNames.length} knowledge source(s)</span>}</div><span className="font-mono text-[10px] text-muted-foreground">{sop.documentId}</span></div><h2 className="text-2xl font-semibold tracking-tight">{sop.title}</h2>{sop.knowledgeSources.documentNames.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Sources: {sop.knowledgeSources.documentNames.join(", ")}</p>}<div className="mt-5 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4"><Meta label="Input quality" value={`${sop.inputReadinessScore}%`} tooltip="Measures how complete and detailed your instructions are before AI generation." /><Meta label="SOP readiness" value={`${sop.documentReadinessScore}%`} accent tooltip="Measures the completeness and operational quality of the generated SOP. AI may improve missing details using industry best practices while preserving your intent." /><Meta label="Version" value={sop.version} /><Meta label="Est. time" value={sop.estimatedCompletionTime} /></div>{isAiEnhanced && <div className="mt-4 flex flex-wrap items-center gap-2"><Tooltip label="AI Enhanced" content="The AI expanded your instructions by adding structure, best practices, responsibilities, assumptions, checklists and training content."><span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium text-emerald-400"><Sparkles className="size-3" /> AI Enhanced</span></Tooltip>{isSignificantlyEnhanced && <span className="text-[11px] text-emerald-300/80">AI significantly improved this SOP.</span>}</div>}</div>
           <Section title="1. Purpose"><p>{sop.purpose}</p></Section><Section title="2. Scope"><p>{sop.scope}</p></Section>
           <Section title="3. Roles and responsibilities"><div className="overflow-hidden rounded-lg border border-border">{sop.roles.map((item) => <div key={item.role} className="grid gap-1 border-b border-border p-3 last:border-0 sm:grid-cols-[8rem_1fr]"><strong className="text-foreground">{item.role}</strong><span>{item.responsibility}</span></div>)}</div></Section>
           <Section title="4. Prerequisites"><List items={sop.prerequisites} /></Section>
@@ -95,10 +98,11 @@ export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, is
           <Section title="7. Quality-control checklist"><div className="space-y-2">{sop.qualityChecklist.map((item) => <div key={item} className="flex gap-2"><span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded border border-emerald-500/40"><Check className="size-2.5 text-emerald-400" /></span>{item}</div>)}</div></Section>
           <Section title="8. Training quiz"><div className="space-y-4">{sop.trainingQuiz.map((item, index) => <div key={item.question}><p className="font-medium text-foreground">{index + 1}. {item.question}</p><ul className="mt-1 list-inside list-disc text-xs">{item.options.map((option) => <li key={option}>{option}</li>)}</ul><p className="mt-1 text-xs">Answer: {item.correctAnswer}</p></div>)}</div></Section>
           <Section title="9. Agent-ready JSON preview"><pre className="max-h-60 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-[10px] leading-5 text-emerald-300/80">{JSON.stringify(sop.agentReadyJson, null, 2)}</pre></Section>
+          <Section title="10. Source Notes"><div className="space-y-3"><div><strong className="text-foreground">Documents used</strong><List items={sop.knowledgeSources.sourceNotes.documentsUsed.length > 0 ? sop.knowledgeSources.sourceNotes.documentsUsed : ["No knowledge documents selected"]} /></div><div><strong className="text-foreground">Important assumptions</strong><List items={sop.knowledgeSources.sourceNotes.importantAssumptions.length > 0 ? sop.knowledgeSources.sourceNotes.importantAssumptions : ["No material assumptions recorded"]} /></div><div><strong className="text-foreground">Missing information</strong><List items={sop.knowledgeSources.sourceNotes.missingInformation.length > 0 ? sop.knowledgeSources.sourceNotes.missingInformation : ["No missing information recorded"]} /></div><p><strong className="text-foreground">General best practices added:</strong> {sop.knowledgeSources.sourceNotes.generalBestPracticesAdded ? "Yes" : "No"}</p></div></Section>
         </div>
       </article>}
       <div className="flex flex-wrap items-center gap-2 border-t border-border/80 p-3 sm:px-5">
-        <span className={`mr-auto text-[11px] ${exportError ? "text-amber-400" : "text-muted-foreground"}`} role={exportError ? "alert" : undefined}>{exportError ?? (exporting ? `Preparing ${exporting} export...` : sop ? "Export this reviewed SOP." : "Generate an SOP to enable exports.")}</span>
+        <span className={`mr-auto text-[11px] ${exportError || versionMessage === "Could not save version." ? "text-amber-400" : versionMessage ? "text-emerald-400" : "text-muted-foreground"}`} role={exportError ? "alert" : undefined}>{exportError ?? versionMessage ?? (exporting ? `Preparing ${exporting} export...` : sop ? "Export this reviewed SOP." : "Generate an SOP to enable exports.")}</span>
         <Button variant="outline" size="sm" onClick={() => runExport("PDF")} disabled={!sop || Boolean(exporting)}><FileText /> PDF</Button>
         <Button variant="outline" size="sm" onClick={() => runExport("DOCX")} disabled={!sop || Boolean(exporting)}><Download /> DOCX</Button>
         <Button variant="outline" size="sm" onClick={() => runExport("JSON")} disabled={!sop || Boolean(exporting)}><FileJson /> JSON</Button>

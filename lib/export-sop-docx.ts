@@ -88,6 +88,13 @@ function buildDocument(sop: Sop): Array<Paragraph | Table> {
       ...quiz.options.map((option) => new Paragraph({ numbering: { reference: "sop-bullets", level: 0 }, children: [new TextRun(option)] })),
       new Paragraph({ spacing: { before: 40, after: 160 }, children: [new TextRun({ text: "Correct answer: ", bold: true, color: blue }), new TextRun(quiz.correctAnswer)] }),
     ]),
+    heading("9. Source Notes"),
+    new Paragraph({ children: [new TextRun({ text: "Knowledge sources: ", bold: true, color: blue }), new TextRun(sop.knowledgeSources.documentNames.length > 0 ? sop.knowledgeSources.documentNames.join(", ") : "None selected")] }),
+    new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("Important assumptions")] }),
+    ...bullets(sop.knowledgeSources.sourceNotes.importantAssumptions.length > 0 ? sop.knowledgeSources.sourceNotes.importantAssumptions : ["No material assumptions recorded"]),
+    new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("Missing information")] }),
+    ...bullets(sop.knowledgeSources.sourceNotes.missingInformation.length > 0 ? sop.knowledgeSources.sourceNotes.missingInformation : ["No missing information recorded"]),
+    new Paragraph({ children: [new TextRun({ text: "General best practices added: ", bold: true, color: blue }), new TextRun(sop.knowledgeSources.sourceNotes.generalBestPracticesAdded ? "Yes" : "No")] }),
   ];
 }
 

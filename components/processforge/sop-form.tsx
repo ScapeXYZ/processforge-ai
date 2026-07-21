@@ -9,6 +9,7 @@ import { ReadinessPanel } from "@/components/processforge/readiness-panel";
 import { SmartSuggestions } from "@/components/processforge/smart-suggestions";
 import { calculateReadinessScore } from "@/lib/readiness-score";
 import { getSmartSuggestions } from "@/lib/smart-suggestions";
+import { KnowledgeBaseSelector } from "@/components/processforge/knowledge-base-selector";
 
 export type DetailLevel = "concise" | "standard" | "detailed";
 export type SopFormValues = { title: string; industry: string; department: string; description: string; audience: string; detailLevel: DetailLevel };
@@ -25,7 +26,7 @@ const stageStartSeconds = [0, 3, 7, 12, 18] as const;
 
 const fieldClass = "h-10 bg-background/60 px-3";
 
-export function SopForm({ values, onChange, onSubmit, isGenerated, isLoading, error }: { values: SopFormValues; onChange: (values: SopFormValues) => void; onSubmit: () => void; isGenerated: boolean; isLoading: boolean; error: string | null }) {
+export function SopForm({ values, onChange, onSubmit, isGenerated, isLoading, error, selectedKnowledgeIds, onKnowledgeSelectionChange }: { values: SopFormValues; onChange: (values: SopFormValues) => void; onSubmit: () => void; isGenerated: boolean; isLoading: boolean; error: string | null; selectedKnowledgeIds: string[]; onKnowledgeSelectionChange: (ids: string[]) => void }) {
   const set = <K extends keyof SopFormValues>(key: K, value: SopFormValues[K]) => onChange({ ...values, [key]: value });
   const readiness = calculateReadinessScore(values);
   const suggestions = getSmartSuggestions(values);
@@ -41,6 +42,7 @@ export function SopForm({ values, onChange, onSubmit, isGenerated, isLoading, er
         <Field label="Process description" hint="Be specific about the trigger, desired result, and important constraints."><Textarea required value={values.description} onChange={(e) => set("description", e.target.value)} placeholder="Describe how the process starts, what should happen, and the expected outcome..." className="min-h-32 resize-y bg-background/60 p-3 leading-6" /></Field>
         <Field label="Target audience"><Input required value={values.audience} onChange={(e) => set("audience", e.target.value)} placeholder="e.g. Support agents and team leads" className={fieldClass} /></Field>
         <fieldset><legend className="mb-2 text-sm font-medium">Detail level</legend><div className="grid grid-cols-3 gap-2">{(["concise", "standard", "detailed"] as const).map((level) => <button key={level} type="button" onClick={() => set("detailLevel", level)} className={`rounded-lg border px-2 py-2.5 text-sm capitalize transition-colors ${values.detailLevel === level ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-400" : "border-border bg-background/60 text-muted-foreground hover:text-foreground"}`}>{level}</button>)}</div></fieldset>
+        <KnowledgeBaseSelector selectedIds={selectedKnowledgeIds} onChange={onKnowledgeSelectionChange} context={values} />
         <ReadinessPanel readiness={readiness} />
         <SmartSuggestions analysis={suggestions} />
         {isLoading && <GenerationProgress />}

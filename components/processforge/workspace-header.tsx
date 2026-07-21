@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronLeft, Cloud, History, MoreHorizontal } from "lucide-react";
+import { BookOpen, ChevronLeft, Cloud, GitBranch, History, MoreHorizontal } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { WorkflowLogo } from "./workflow-logo";
 
@@ -17,7 +17,9 @@ export function WorkspaceHeader() {
         </Link>
       </div>
       <div className="flex items-center gap-2">
+        <Link href="/knowledge-base" className={buttonVariants({ variant: "ghost", size: "sm" })}><BookOpen /> <span className="hidden lg:inline">Knowledge Base</span></Link>
         <Link href="/history" className={buttonVariants({ variant: "ghost", size: "sm" })}><History /> History</Link>
+        <Link href="/versions" className={buttonVariants({ variant: "ghost", size: "sm" })}><GitBranch /> Versions</Link>
         <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"><Cloud className="size-3.5" /> Saved locally</span>
         <Button variant="ghost" size="icon" aria-label="More options"><MoreHorizontal /></Button>
       </div>

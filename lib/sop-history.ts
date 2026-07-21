@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { sopSchema, type Sop } from "@/lib/sop-schema";
+import { migrateSopSnapshot, sopSchema, type Sop } from "@/lib/sop-schema";
 
 const STORAGE_KEY = "processforge.sop-history.v1";
 const HISTORY_LIMIT = 50;
@@ -26,7 +26,9 @@ export function getSopHistory(): SopHistoryEntry[] {
   try {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) return [];
-    const parsed = historySchema.safeParse(JSON.parse(stored));
+    const raw: unknown = JSON.parse(stored);
+    const migrated = Array.isArray(raw) ? raw.map((entry) => typeof entry === "object" && entry !== null && "sop" in entry ? { ...entry, sop: migrateSopSnapshot(entry.sop) } : entry) : raw;
+    const parsed = historySchema.safeParse(migrated);
     if (!parsed.success) {
       window.localStorage.removeItem(STORAGE_KEY);
       return [];

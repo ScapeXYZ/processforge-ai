@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const response = await openai.responses.parse({
       model: "gpt-5-mini",
       store: false,
-      instructions: `You are a senior operations consultant editing an existing SOP. Return only data matching the supplied schema. Preserve documentId, version, inputReadinessScore, documentReadinessScore, and estimatedCompletionTime exactly. Do not invent laws, certifications, company policies, or claims of compliance. Clearly label necessary assumptions. Keep every procedure step measurable with an owner and evidence. Keep the agent-ready JSON consistent when the requested scope permits it.`,
+      instructions: `You are a senior operations consultant editing an existing SOP. Return only data matching the supplied schema. Preserve documentId, version, inputReadinessScore, documentReadinessScore, estimatedCompletionTime, and knowledgeSources exactly. Do not invent laws, certifications, company policies, or claims of compliance. Clearly label necessary assumptions. Keep every procedure step measurable with an owner and evidence. Keep the agent-ready JSON consistent when the requested scope permits it.`,
       input: `Editing scope: ${section === "entire" ? "the entire SOP" : `only the ${section} section`}.
 User instruction: ${prompt}
 
