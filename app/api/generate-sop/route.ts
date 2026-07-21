@@ -3,12 +3,15 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { buildSopPrompt, SOP_SYSTEM_PROMPT } from "@/lib/sop-prompt";
 import { sopRequestSchema, sopSchema } from "@/lib/sop-schema";
+import { requireUser } from "@/lib/supabase/require-user";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+  const auth = await requireUser();
+  if (!auth.ok) return errorResponse(auth.message, auth.status);
   let body: unknown;
 
   try {

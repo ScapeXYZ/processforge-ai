@@ -1,0 +1,2 @@
+import Link from "next/link"; import { Suspense } from "react"; import { AuthCard } from "@/components/processforge/auth-card"; import { SignupForm } from "@/components/processforge/auth-fields";
+export default function SignupPage() { return <AuthCard title="Create your account" description="Keep SOPs, versions, and metadata available across devices." footer={<>Already registered? <Link className="text-emerald-300" href="/login">Sign in</Link></>}><Suspense fallback={<p className="text-sm text-slate-400">Loading…</p>}><SignupForm /></Suspense></AuthCard>; }

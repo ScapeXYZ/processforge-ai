@@ -11,6 +11,16 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000).
 
+Copy `.env.example` to `.env.local` and provide:
+
+```bash
+OPENAI_API_KEY=...
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=YOUR_PUBLISHABLE_OR_ANON_KEY
+```
+
+Only the public project URL and publishable/anon key belong in browser code. Never add a service-role key to a `NEXT_PUBLIC_` variable.
+
 Production checks:
 
 ```bash
@@ -39,17 +49,51 @@ Limits are 10 MB per file and 10 documents per browser knowledge base. Files are
 
 No embeddings or vector database are used yet.
 
+## Supabase authentication and cloud sync
+
+ProcessForge uses the current `@supabase/ssr` cookie flow with PKCE. Next.js `proxy.ts` refreshes sessions and protects `/create`, `/workspace`, `/history`, `/versions`, `/knowledge-base`, `/dashboard`, and `/settings`. Login, signup, recovery, reset, and callback routes remain public.
+
+To initialize the database, open Supabase SQL Editor and run [`supabase/migrations/202607210001_initial_cloud_schema.sql`](supabase/migrations/202607210001_initial_cloud_schema.sql). It creates profiles, SOPs, SOP versions, and knowledge-document metadata. Row Level Security is enabled on every table, with select/insert/update/delete policies scoped to `auth.uid()`.
+
+Successful SOP generation, regeneration, AI edits, manual saves, and restores retain a local snapshot and attempt a cloud save. The workspace shows Saving, Saved, Offline, Save failed, or Cloud conflict. Updates use the last known `updated_at` value; a newer cloud record is not silently overwritten. Use the retry control after connectivity returns.
+
+After the first login, the dashboard and settings page show **Local work found** when appropriate. Import requires confirmation, detects duplicate SOP document IDs and version numbers, reports imported/skipped/failed counts, and never deletes local data automatically.
+
 ## Local-storage limitation
 
-Knowledge documents, extracted text, SOP history, and version history are stored in the current browser’s `localStorage`. Data does not synchronize across browsers or devices and can be removed by clearing site data. Browser storage quotas vary; large extracted documents can exhaust the available quota even within the upload limits.
+SOP records, versions, profiles, and knowledge-document metadata synchronize through Supabase after sign-in. Local copies remain a resilience fallback. Extracted knowledge-document text intentionally remains in the current browser, so grounded generation on another device requires re-uploading the source document. Browser storage quotas vary.
 
 ## Security notes
 
 - Document extraction runs on the server route and document content is never executed as code or rendered as HTML.
 - Uploaded reference text is treated as untrusted data and cannot override system or developer instructions.
 - The application does not claim compliance or invent unsupported company policies, quotations, or page references.
-- This local phase has no authentication, database, cloud storage, payments, or sharing controls. Do not use it for highly sensitive documents on shared devices.
+- Protected pages and API operations verify the Supabase user server-side; database ownership is additionally enforced with RLS.
+- The public anon/publishable key is expected in the browser and is not a privileged service-role secret.
+- Do not use extracted local documents on shared devices without clearing browser storage afterward.
 
-## Future cloud knowledge base
+## Known limitations and future cloud knowledge base
 
-A future phase can add authenticated encrypted object storage, organization-level access controls, durable metadata, background processing, OCR, audit logs, retention policies, and vector search. Those cloud capabilities are intentionally out of scope for the current local implementation.
+This phase is local-first rather than a full offline synchronization engine. Conflict detection is record-level, queued background sync is not included, and knowledge text is not uploaded. Future work can add encrypted object storage, organization access controls, durable extraction jobs, OCR, audit logs, retention policies, and vector search.
+
+## Team collaboration
+
+Authenticated users receive a personal workspace automatically. Owners can create additional workspaces, invite teammates, rename or delete team workspaces, and manage Owner/Admin/Editor/Viewer permissions. SOPs, versions, comments, activities, invitations, and workflow changes are protected by workspace-scoped Row Level Security.
+
+Run [`supabase/migrations/202607220001_team_collaboration.sql`](supabase/migrations/202607220001_team_collaboration.sql) after the Phase 10 migration. It backfills existing SOPs into each owner’s personal workspace and adds the `draft`, `in_review`, `approved`, and `archived` workflow.
+
+Workspace invitations are delivered through the official `resend` SDK from a server-only Next.js Route Handler. The API key is never included in client bundles. Apply [`supabase/migrations/202607220004_secure_invitation_email_delivery.sql`](supabase/migrations/202607220004_secure_invitation_email_delivery.sql) after the earlier collaboration migrations.
+
+Configure these values in `.env.local`:
+
+```env
+RESEND_API_KEY=re_...
+PROCESSFORGE_FROM_EMAIL=ProcessForge AI <invites@your-verified-domain.com>
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+Create a Resend account, add a sending domain, publish its SPF and DKIM DNS records, wait for the domain to show **Verified**, and create a sending API key. Production sender addresses must use that verified domain. Resend development/testing senders may be restricted to the account owner’s address; use a verified domain to test arbitrary recipients. Set `NEXT_PUBLIC_APP_URL` to the exact HTTPS production origin when deployed.
+
+Invitation tokens are 256-bit random values. Only their SHA-256 hashes are stored. Links expire after seven days and become unusable after acceptance or revocation. Owners and admins can inspect delivery state, resend after the cooldown, or revoke. Registered recipients sign in; unregistered recipients sign up and return to the acceptance URL after email verification.
+
+Test delivery by inviting a second account, opening the email while logged out, signing in with the invited email, and accepting. Repeat with an unregistered email, complete signup and verification, and accept. Also test the wrong account, expiry, revocation, resend throttling, delivery failure, and duplicate-pending prevention.

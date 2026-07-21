@@ -3,6 +3,7 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sopSchema } from "@/lib/sop-schema";
+import { requireUser } from "@/lib/supabase/require-user";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -12,6 +13,8 @@ const editRequestSchema = z.object({ sop: sopSchema, section: sectionSchema, pro
 
 export async function POST(request: Request) {
   const startedAt = Date.now();
+  const auth = await requireUser();
+  if (!auth.ok) return errorResponse(auth.message, auth.status);
   let body: unknown;
   try { body = await request.json(); } catch { return errorResponse("Request body must be valid JSON.", 400); }
 

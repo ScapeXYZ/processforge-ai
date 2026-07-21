@@ -4,11 +4,14 @@ import { PasswordException, PDFParse } from "pdf-parse";
 import { countWords, normalizeDocumentText } from "@/lib/document-text";
 import { hasValidFileSignature, validateKnowledgeFile } from "@/lib/document-validation";
 import type { KnowledgeDocumentType } from "@/types/knowledge-base";
+import { requireUser } from "@/lib/supabase/require-user";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const auth = await requireUser();
+  if (!auth.ok) return errorResponse(auth.message, auth.status);
   let formData: FormData;
   try { formData = await request.formData(); } catch { return errorResponse("Upload data could not be read.", 400); }
   const file = formData.get("file");

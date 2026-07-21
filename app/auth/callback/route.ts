@@ -1,0 +1,4 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { safeReturnUrl } from "@/lib/auth/return-url";
+import { createClient } from "@/lib/supabase/server";
+export async function GET(request: NextRequest) { const url = new URL(request.url); const code = url.searchParams.get("code"); const invitationReturn = request.cookies.get("processforge_invitation_return")?.value; const next = safeReturnUrl(invitationReturn ? decodeURIComponent(invitationReturn) : url.searchParams.get("next")); if (code) { try { const { error } = await (await createClient()).auth.exchangeCodeForSession(code); if (!error) { const response = NextResponse.redirect(new URL(next, request.url)); response.cookies.delete("processforge_invitation_return"); return response; } } catch { /* redirect safely below */ } } return NextResponse.redirect(new URL("/login?error=callback", request.url)); }

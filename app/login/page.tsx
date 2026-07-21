@@ -1,0 +1,2 @@
+import Link from "next/link"; import { Suspense } from "react"; import { AuthCard } from "@/components/processforge/auth-card"; import { LoginForm } from "@/components/processforge/auth-fields";
+export default function LoginPage() { return <AuthCard title="Welcome back" description="Sign in to sync your ProcessForge workspace." footer={<>New to ProcessForge? <Link className="text-emerald-300" href="/signup">Create account</Link></>}><Suspense fallback={<p className="text-sm text-slate-400">Loading…</p>}><LoginForm /></Suspense></AuthCard>; }

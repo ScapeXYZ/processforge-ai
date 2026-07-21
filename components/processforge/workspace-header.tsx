@@ -1,28 +1,7 @@
-import Link from "next/link";
-import { BookOpen, ChevronLeft, Cloud, GitBranch, History, MoreHorizontal } from "lucide-react";
-import { Button, buttonVariants } from "@/components/ui/button";
-import { WorkflowLogo } from "./workflow-logo";
-
-export function WorkspaceHeader() {
-  return (
-    <header className="relative z-20 flex h-16 shrink-0 items-center justify-between border-b border-border/80 bg-background px-4 sm:px-6">
-      <div className="flex min-w-0 items-center gap-3">
-        <Link href="/" className="flex items-center gap-2.5 font-semibold tracking-tight" aria-label="ProcessForge AI home">
-          <WorkflowLogo className="size-7 text-emerald-500" />
-          <span className="hidden sm:inline">ProcessForge <span className="text-muted-foreground">AI</span></span>
-        </Link>
-        <span className="h-5 w-px bg-border" />
-        <Link href="/" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ChevronLeft className="size-4" /> Workspace
-        </Link>
-      </div>
-      <div className="flex items-center gap-2">
-        <Link href="/knowledge-base" className={buttonVariants({ variant: "ghost", size: "sm" })}><BookOpen /> <span className="hidden lg:inline">Knowledge Base</span></Link>
-        <Link href="/history" className={buttonVariants({ variant: "ghost", size: "sm" })}><History /> History</Link>
-        <Link href="/versions" className={buttonVariants({ variant: "ghost", size: "sm" })}><GitBranch /> Versions</Link>
-        <span className="hidden items-center gap-1.5 text-xs text-muted-foreground sm:flex"><Cloud className="size-3.5" /> Saved locally</span>
-        <Button variant="ghost" size="icon" aria-label="More options"><MoreHorizontal /></Button>
-      </div>
-    </header>
-  );
-}
+"use client";
+import { useEffect,useState } from "react";import Link from "next/link";import { Bell,BookOpen,ChevronLeft,Cloud,CloudOff,GitBranch,History,LayoutDashboard,LogOut,Settings,Users } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";import { WorkflowLogo } from "./workflow-logo";import { createClient } from "@/lib/supabase/client";import type { CloudSaveState } from "@/lib/cloud/sync-manager";import { fetchInvitations } from "@/lib/cloud/workspace-service";
+export function WorkspaceHeader({cloudStatus="idle",onRetry}:{cloudStatus?:CloudSaveState;onRetry?:()=>void}){const[identity,setIdentity]=useState<string|null>(null);const[notifications,setNotifications]=useState(0);
+ useEffect(()=>{try{const client=createClient();void client.auth.getUser().then(({data})=>{setIdentity(data.user?.user_metadata.display_name||data.user?.email||null);if(data.user)void fetchInvitations().then(result=>{if(result.ok)setNotifications(result.data.length)})});const{data}=client.auth.onAuthStateChange((_event,session)=>setIdentity(session?.user.user_metadata.display_name||session?.user.email||null));return()=>data.subscription.unsubscribe()}catch{return}},[]);
+ const statusText={idle:"Local backup",saving:"Saving…",saved:"Saved",offline:"Offline",failed:"Save failed",conflict:"Cloud conflict"}[cloudStatus];const navClass=buttonVariants({variant:"ghost",size:"sm"});
+ return <header className="relative z-20 flex min-h-16 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/80 bg-background px-4 py-2 sm:px-6"><div className="flex min-w-0 items-center gap-3"><Link href="/" className="flex items-center gap-2.5 font-semibold tracking-tight" aria-label="ProcessForge AI home"><WorkflowLogo className="size-7 text-emerald-500"/><span className="hidden sm:inline">ProcessForge <span className="text-muted-foreground">AI</span></span></Link><span className="h-5 w-px bg-border"/><Link href="/dashboard" className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ChevronLeft className="size-4"/>Workspace</Link></div><nav aria-label="Workspace" className="flex flex-wrap items-center justify-end gap-1"><Link href="/dashboard" className={navClass}><LayoutDashboard/><span className="hidden xl:inline">Dashboard</span></Link><Link href="/workspaces" className={navClass}><Users/><span className="hidden xl:inline">Workspaces</span></Link><Link href="/knowledge-base" className={navClass}><BookOpen/><span className="hidden 2xl:inline">Knowledge Base</span></Link><Link href="/history" className={navClass}><History/><span className="hidden 2xl:inline">History</span></Link><Link href="/versions" className={navClass}><GitBranch/><span className="hidden 2xl:inline">Versions</span></Link>{identity&&<Link href="/workspaces" className={`${navClass} relative`} aria-label={`${notifications} notifications`}><Bell/>{notifications>0&&<span className="absolute right-0 top-0 grid size-4 place-items-center rounded-full bg-emerald-400 text-[9px] font-bold text-black">{Math.min(9,notifications)}</span>}</Link>}{identity?<><Link href="/settings" title={identity} className={navClass}><Settings/><span className="hidden 2xl:inline max-w-32 truncate">{identity}</span></Link><form action="/auth/signout" method="post"><button className={navClass} aria-label="Sign out"><LogOut/></button></form></>:<><Link href="/login" className={navClass}>Sign In</Link><Link href="/signup" className={buttonVariants({size:"sm"})}>Create Account</Link></>}<button type="button" onClick={onRetry} disabled={!onRetry||!["failed","offline","conflict"].includes(cloudStatus)} title={onRetry?"Retry cloud save":statusText} className="hidden items-center gap-1.5 px-2 text-xs text-muted-foreground disabled:cursor-default sm:flex">{cloudStatus==="offline"||cloudStatus==="failed"?<CloudOff className="size-3.5 text-amber-400"/>:<Cloud className="size-3.5"/>}{statusText}</button></nav></header>}

@@ -1,0 +1,4 @@
+import { CloudDashboard } from "@/components/processforge/cloud-dashboard";
+import { TeamDashboardSummary } from "@/components/processforge/team-dashboard-summary";
+export const dynamic = "force-dynamic";
+export default function DashboardPage(){ return <><CloudDashboard/><section className="mx-auto -mt-2 max-w-7xl px-4 pb-8 sm:px-6" aria-label="Team collaboration overview"><TeamDashboardSummary/></section></>; }

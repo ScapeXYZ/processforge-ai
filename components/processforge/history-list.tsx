@@ -1,53 +1,16 @@
 "use client";
-
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Clock3, FileText, Search, Trash2 } from "lucide-react";
+import { Archive, Clock3, FileText, Heart, RefreshCw, Search, Trash2 } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { clearSopHistory, deleteSopHistoryEntry, getSopHistory, type SopHistoryEntry } from "@/lib/sop-history";
+import { deleteCloudSop, fetchSops, setSopFlags, type CloudSop } from "@/lib/cloud/sop-service";
+import { getSopHistory, type SopHistoryEntry } from "@/lib/sop-history";
 
-export function HistoryList() {
-  const [entries, setEntries] = useState<SopHistoryEntry[]>([]);
-  const [query, setQuery] = useState("");
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredEntries = useMemo(() => entries.filter((entry) => !normalizedQuery || [entry.title, entry.industry, entry.department, entry.documentId].some((value) => value.toLowerCase().includes(normalizedQuery))), [entries, normalizedQuery]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => setEntries(getSopHistory()), 0);
-    return () => window.clearTimeout(timer);
-  }, []);
-
-  const clearAll = () => {
-    if (!window.confirm("Clear all saved SOP history? This cannot be undone.")) return;
-    clearSopHistory();
-    setEntries([]);
-  };
-
-  return <section>
-    <div className="flex flex-col gap-3 border-b border-border/80 pb-5 sm:flex-row sm:items-center">
-      <div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search title, industry, department or document ID" className="h-10 bg-card/60 pl-9" /></div>
-      <Button variant="outline" onClick={clearAll} disabled={entries.length === 0}><Trash2 /> Clear history</Button>
-    </div>
-
-    {entries.length === 0 ? <HistoryEmpty /> : filteredEntries.length === 0 ? <div className="py-20 text-center"><Search className="mx-auto size-6 text-muted-foreground" /><h2 className="mt-4 text-sm font-medium">No matching SOPs</h2><p className="mt-1 text-xs text-muted-foreground">Try a different search term.</p></div> : <div className="divide-y divide-border/80">{filteredEntries.map((entry) => <HistoryRow key={entry.id} entry={entry} onDelete={() => setEntries(deleteSopHistoryEntry(entry.id))} />)}</div>}
-  </section>;
-}
-
-function HistoryRow({ entry, onDelete }: { entry: SopHistoryEntry; onDelete: () => void }) {
-  return <article className="group flex flex-col gap-4 py-5 sm:flex-row sm:items-center">
-    <div className="flex min-w-0 flex-1 gap-3">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-emerald-400"><FileText className="size-4" /></span>
-      <div className="min-w-0"><h2 className="truncate text-sm font-medium text-foreground">{entry.title}</h2><div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span className="font-mono">{entry.documentId}</span><span>{entry.industry}</span><span>{entry.department}</span><span className="flex items-center gap-1"><Clock3 className="size-3" />{formatGeneratedAt(entry.generatedAt)}</span></div></div>
-    </div>
-    <div className="flex items-center gap-2 pl-13 sm:pl-0"><span className="mr-1 text-xs text-muted-foreground">Input {entry.inputReadinessScore}%</span><span className="mr-1 text-xs font-medium text-emerald-400">SOP {entry.documentReadinessScore}%</span><Link className={buttonVariants({ variant: "outline", size: "sm" })} href={`/create?history=${encodeURIComponent(entry.id)}`}>Reopen</Link><Button variant="ghost" size="icon-sm" onClick={onDelete} aria-label={`Delete ${entry.title}`}><Trash2 /></Button></div>
-  </article>;
-}
-
-function HistoryEmpty() {
-  return <div className="flex min-h-[28rem] items-center justify-center text-center"><div><div className="mx-auto flex size-12 items-center justify-center rounded-xl border border-border bg-card"><FileText className="size-5 text-muted-foreground" /></div><h2 className="mt-4 text-sm font-medium">No saved SOPs yet</h2><p className="mx-auto mt-2 max-w-sm text-xs leading-5 text-muted-foreground">Successfully generated SOPs will appear here automatically and remain available on this device.</p><Link className={buttonVariants({ className: "mt-5 bg-emerald-500 text-emerald-950 hover:bg-emerald-400" })} href="/create">Create an SOP</Link></div></div>;
-}
-
-function formatGeneratedAt(value: string): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
+export function HistoryList(){const [cloud,setCloud]=useState<CloudSop[]>([]);const [local,setLocal]=useState<SopHistoryEntry[]>([]);const [query,setQuery]=useState("");const [error,setError]=useState("");const [loading,setLoading]=useState(true);
+ const load=useCallback(async()=>{setLoading(true);setError("");const r=await fetchSops();if(r.ok)setCloud(r.data);else{setError(`${r.error.message} Showing this browser's local history.`);setLocal(getSopHistory())}setLoading(false)},[]);useEffect(()=>{const timer=window.setTimeout(()=>void load(),0);return()=>window.clearTimeout(timer)},[load]);
+ const q=query.trim().toLowerCase();const items=useMemo(()=>cloud.filter(x=>!q||[x.row.title,x.row.industry,x.row.department,x.sop.documentId].some(v=>v?.toLowerCase().includes(q))),[cloud,q]);const locals=local.filter(x=>!q||[x.title,x.industry,x.department,x.documentId].some(v=>v.toLowerCase().includes(q)));
+ async function flags(item:CloudSop,next:{is_favorite?:boolean;is_archived?:boolean}){const r=await setSopFlags(item.row.id,next);if(r.ok)setCloud(v=>v.map(x=>x.row.id===item.row.id?{...x,row:{...x.row,...next}}:x));else setError(r.error.message)}
+ async function remove(item:CloudSop){if(!confirm(`Permanently delete “${item.row.title}” and all its versions?`))return;const r=await deleteCloudSop(item.row.id);if(r.ok)setCloud(v=>v.filter(x=>x.row.id!==item.row.id));else setError(r.error.message)}
+ return <section><div className="flex gap-3 border-b border-border/80 pb-5"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"/><Input className="pl-9" value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search title, industry, department or document ID"/></div><Button variant="outline" onClick={()=>void load()}><RefreshCw/>Retry</Button></div>{error&&<p className="mt-4 rounded-lg bg-amber-400/10 p-3 text-sm text-amber-200">{error}</p>}{loading?<div className="space-y-3 py-6">{[1,2,3].map(x=><div key={x} className="h-16 animate-pulse rounded-lg bg-white/5"/>)}</div>:items.length? <div className="divide-y divide-border">{items.map(item=><article key={item.row.id} className="flex flex-col gap-4 py-5 sm:flex-row sm:items-center"><HistoryInfo title={item.row.title} documentId={item.sop.documentId} industry={item.row.industry??"Unspecified"} department={item.row.department??"Unspecified"} date={item.row.updated_at}/><div className="flex gap-1"><Link className={buttonVariants({variant:"outline",size:"sm"})} href={`/create?cloud=${item.row.id}`}>{item.row.is_archived?"Restore":"Open"}</Link><Button variant="ghost" size="icon-sm" aria-label="Favorite" onClick={()=>void flags(item,{is_favorite:!item.row.is_favorite})}><Heart className={item.row.is_favorite?"fill-rose-400 text-rose-400":""}/></Button><Button variant="ghost" size="icon-sm" aria-label={item.row.is_archived?"Restore":"Archive"} onClick={()=>void flags(item,{is_archived:!item.row.is_archived})}><Archive/></Button><Button variant="ghost" size="icon-sm" aria-label="Delete" onClick={()=>void remove(item)}><Trash2/></Button></div></article>)}</div>:locals.length?<div className="divide-y divide-border">{locals.map(item=><article key={item.id} className="flex items-center gap-4 py-5"><HistoryInfo title={item.title} documentId={item.documentId} industry={item.industry} department={item.department} date={item.generatedAt}/><Link className={buttonVariants({variant:"outline",size:"sm"})} href={`/create?history=${item.id}`}>Open local</Link></article>)}</div>:<div className="py-24 text-center"><FileText className="mx-auto size-8 text-muted-foreground"/><h2 className="mt-4 font-medium">No SOPs yet</h2><p className="mt-1 text-sm text-muted-foreground">Generated SOPs will be saved locally and synced to your account.</p><Link href="/create" className={buttonVariants({className:"mt-5"})}>Create an SOP</Link></div>}</section>}
+function HistoryInfo({title,documentId,industry,department,date}:{title:string;documentId:string;industry:string;department:string;date:string}){return <div className="flex min-w-0 flex-1 gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-lg border border-border bg-card text-emerald-400"><FileText className="size-4"/></span><div className="min-w-0"><h2 className="truncate text-sm font-medium">{title}</h2><p className="mt-1 flex flex-wrap gap-2 text-[11px] text-muted-foreground"><span className="font-mono">{documentId}</span><span>{industry}</span><span>{department}</span><span className="flex items-center gap-1"><Clock3 className="size-3"/>{new Date(date).toLocaleString()}</span></p></div></div>}
