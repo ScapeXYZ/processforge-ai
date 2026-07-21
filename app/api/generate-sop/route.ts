@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       return errorResponse("The provider could not generate a usable SOP. Please try again.", 502);
     }
 
-    return NextResponse.json(response.output_parsed);
+    return NextResponse.json({ ...response.output_parsed, inputReadinessScore: parsedRequest.data.inputReadinessScore });
   } catch (error: unknown) {
     logProviderError(error, startedAt);
     if (error instanceof OpenAI.RateLimitError) {

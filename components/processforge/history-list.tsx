@@ -40,7 +40,7 @@ function HistoryRow({ entry, onDelete }: { entry: SopHistoryEntry; onDelete: () 
       <span className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border bg-card text-emerald-400"><FileText className="size-4" /></span>
       <div className="min-w-0"><h2 className="truncate text-sm font-medium text-foreground">{entry.title}</h2><div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground"><span className="font-mono">{entry.documentId}</span><span>{entry.industry}</span><span>{entry.department}</span><span className="flex items-center gap-1"><Clock3 className="size-3" />{formatGeneratedAt(entry.generatedAt)}</span></div></div>
     </div>
-    <div className="flex items-center gap-2 pl-13 sm:pl-0"><span className="mr-1 text-xs font-medium text-emerald-400">{entry.readinessScore}% ready</span><Link className={buttonVariants({ variant: "outline", size: "sm" })} href={`/create?history=${encodeURIComponent(entry.id)}`}>Reopen</Link><Button variant="ghost" size="icon-sm" onClick={onDelete} aria-label={`Delete ${entry.title}`}><Trash2 /></Button></div>
+    <div className="flex items-center gap-2 pl-13 sm:pl-0"><span className="mr-1 text-xs text-muted-foreground">Input {entry.inputReadinessScore}%</span><span className="mr-1 text-xs font-medium text-emerald-400">SOP {entry.documentReadinessScore}%</span><Link className={buttonVariants({ variant: "outline", size: "sm" })} href={`/create?history=${encodeURIComponent(entry.id)}`}>Reopen</Link><Button variant="ghost" size="icon-sm" onClick={onDelete} aria-label={`Delete ${entry.title}`}><Trash2 /></Button></div>
   </article>;
 }
 

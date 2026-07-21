@@ -9,13 +9,15 @@ export const sopRequestSchema = z.object({
   processDescription: nonEmptyText,
   targetAudience: nonEmptyText,
   detailLevel: z.enum(["concise", "standard", "detailed"]),
+  inputReadinessScore: z.number().int().min(0).max(100),
 }).strict();
 
 export const sopSchema = z.object({
   title: nonEmptyText,
   documentId: nonEmptyText,
   version: nonEmptyText,
-  readinessScore: z.number().int().min(0).max(100),
+  documentReadinessScore: z.number().int().min(0).max(100),
+  inputReadinessScore: z.number().int().min(0).max(100),
   estimatedCompletionTime: nonEmptyText,
   purpose: nonEmptyText,
   scope: nonEmptyText,

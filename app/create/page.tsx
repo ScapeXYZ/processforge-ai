@@ -9,6 +9,7 @@ import { refundTemplate, TemplateSidebar, type Template } from "@/components/pro
 import { WorkflowLogo } from "@/components/processforge/workflow-logo";
 import { WorkspaceHeader } from "@/components/processforge/workspace-header";
 import { getSopHistoryEntry, saveSopToHistory } from "@/lib/sop-history";
+import { calculateReadinessScore } from "@/lib/readiness-score";
 
 const emptyValues: SopFormValues = { title: "", industry: "", department: "", description: "", audience: "", detailLevel: "standard" };
 
@@ -48,10 +49,11 @@ function CreateWorkspace() {
     setIsLoading(true);
     setError(null);
     try {
+      const inputReadinessScore = calculateReadinessScore(values).score;
       const response = await fetch("/api/generate-sop", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ processTitle: values.title, industry: values.industry, department: values.department, processDescription: values.description, targetAudience: values.audience, detailLevel: values.detailLevel }),
+        body: JSON.stringify({ processTitle: values.title, industry: values.industry, department: values.department, processDescription: values.description, targetAudience: values.audience, detailLevel: values.detailLevel, inputReadinessScore }),
       });
       const payload: unknown = await response.json().catch(() => null);
       if (!response.ok) {

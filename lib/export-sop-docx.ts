@@ -106,14 +106,14 @@ function bullets(items: string[]): Paragraph[] {
 function metadataTable(sop: Sop): Table {
   return new Table({
     width: { size: 9360, type: WidthType.DXA },
-    columnWidths: [2340, 2340, 2340, 2340],
     margins: { top: 100, bottom: 100, left: 120, right: 120 },
-    rows: [new TableRow({ children: [metadataCell("Document ID", sop.documentId), metadataCell("Version", sop.version), metadataCell("Readiness", `${sop.readinessScore}%`), metadataCell("Estimated time", sop.estimatedCompletionTime)] })],
+    columnWidths: [1872, 1872, 1872, 1872, 1872],
+    rows: [new TableRow({ children: [metadataCell("Document ID", sop.documentId, 1872), metadataCell("Version", sop.version, 1872), metadataCell("Input quality", `${sop.inputReadinessScore}%`, 1872), metadataCell("SOP readiness", `${sop.documentReadinessScore}%`, 1872), metadataCell("Estimated time", sop.estimatedCompletionTime, 1872)] })],
   });
 }
 
-function metadataCell(label: string, value: string): TableCell {
-  return new TableCell({ width: { size: 2340, type: WidthType.DXA }, borders: cellBorders, shading: { type: ShadingType.CLEAR, fill: paleGreen }, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: label.toUpperCase(), bold: true, size: 16, color: muted })] }), new Paragraph({ spacing: { after: 0 }, children: [new TextRun({ text: value, bold: true, size: 20, color: navy })] })] });
+function metadataCell(label: string, value: string, width: number): TableCell {
+  return new TableCell({ width: { size: width, type: WidthType.DXA }, borders: cellBorders, shading: { type: ShadingType.CLEAR, fill: paleGreen }, verticalAlign: VerticalAlign.CENTER, children: [new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: label.toUpperCase(), bold: true, size: 15, color: muted })] }), new Paragraph({ spacing: { after: 0 }, children: [new TextRun({ text: value, bold: true, size: 18, color: navy })] })] });
 }
 
 function rolesTable(sop: Sop): Table {

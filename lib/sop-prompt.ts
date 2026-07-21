@@ -21,6 +21,7 @@ Department: ${input.department}
 Process description: ${input.processDescription}
 Target audience: ${input.targetAudience}
 Detail level: ${input.detailLevel}
+Input readiness score: ${input.inputReadinessScore}/100
 
-Calibrate the amount of detail to the requested detail level. State any necessary assumptions explicitly inside the relevant string fields.`;
+Calibrate the amount of detail to the requested detail level. Set inputReadinessScore to the supplied score. Score documentReadinessScore independently based on how complete and operationally usable the generated SOP is. State any necessary assumptions explicitly inside the relevant string fields.`;
 }

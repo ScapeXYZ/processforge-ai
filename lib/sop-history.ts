@@ -11,7 +11,8 @@ const historyEntrySchema = z.object({
   generatedAt: z.string().datetime(),
   industry: z.string().min(1),
   department: z.string().min(1),
-  readinessScore: z.number().int().min(0).max(100),
+  documentReadinessScore: z.number().int().min(0).max(100),
+  inputReadinessScore: z.number().int().min(0).max(100),
   sop: sopSchema,
 }).strict();
 
@@ -51,7 +52,8 @@ export function saveSopToHistory({ sop, industry, department }: { sop: Sop; indu
     generatedAt: new Date().toISOString(),
     industry: industry.trim(),
     department: department.trim(),
-    readinessScore: sop.readinessScore,
+    documentReadinessScore: sop.documentReadinessScore,
+    inputReadinessScore: sop.inputReadinessScore,
     sop,
   });
 

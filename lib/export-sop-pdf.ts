@@ -37,9 +37,9 @@ export function exportSopPdf(sop: Sop): void {
   y += 10;
   addText(sop.title, { size: 23, color: [31, 77, 120], bold: true, after: 7 });
 
-  const meta = [["DOCUMENT ID", sop.documentId], ["VERSION", sop.version], ["READINESS", `${sop.readinessScore}%`], ["ESTIMATED TIME", sop.estimatedCompletionTime]] as const;
-  const cellWidth = contentWidth / 4;
-  const metaHeight = 18;
+  const meta = [["DOCUMENT ID", sop.documentId], ["VERSION", sop.version], ["INPUT QUALITY", `${sop.inputReadinessScore}%`], ["SOP READINESS", `${sop.documentReadinessScore}%`], ["ESTIMATED TIME", sop.estimatedCompletionTime]] as const;
+  const cellWidth = contentWidth / meta.length;
+  const metaHeight = 20;
   ensureSpace(metaHeight + 5);
   meta.forEach(([label, value], index) => {
     const x = margin + index * cellWidth;
