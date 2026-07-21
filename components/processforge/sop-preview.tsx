@@ -46,7 +46,7 @@ export function generateMockSop(values: SopFormValues, revision = 1): Sop {
 
 function sopToText(sop: Sop) { return [sop.title, `Document ID: ${sop.documentId} | Version: ${sop.version}`, "", "PURPOSE", sop.purpose, "", "SCOPE", sop.scope, "", "PROCEDURE", ...sop.procedureSteps.map((step) => `${step.stepNumber}. ${step.title}\nOwner: ${step.owner}\n${step.instruction}\nEvidence: ${step.evidence}`), "", "QUALITY CONTROL", ...sop.qualityChecklist.map((item) => `- ${item}`)].join("\n"); }
 
-export function SopPreview({ sop, onRegenerate, onClear, isLoading }: { sop: Sop | null; onRegenerate: () => void; onClear: () => void; isLoading: boolean }) {
+export function SopPreview({ sop, source, onRegenerate, onClear, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; isLoading: boolean }) {
   const copy = async () => { if (sop) await navigator.clipboard.writeText(sopToText(sop)); };
   return (
     <section className="min-w-0 border-t border-border/80 bg-card/30 lg:border-l lg:border-t-0">
@@ -60,7 +60,7 @@ export function SopPreview({ sop, onRegenerate, onClear, isLoading }: { sop: Sop
       </div>
       {!sop ? <EmptyPreview /> : <article className="max-h-none overflow-y-auto p-4 sm:p-6 lg:max-h-[calc(100vh-7.3rem)] lg:p-8">
         <div className="mx-auto max-w-3xl rounded-xl border border-border bg-background p-5 shadow-2xl shadow-black/10 sm:p-8">
-          <div className="border-b border-border pb-6"><div className="mb-4 flex items-center justify-between"><span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">Ready for review</span><span className="font-mono text-[10px] text-muted-foreground">{sop.documentId}</span></div><h2 className="text-2xl font-semibold tracking-tight">{sop.title}</h2><div className="mt-5 grid grid-cols-3 gap-3 text-xs"><Meta label="Version" value={sop.version} /><Meta label="Readiness" value={`${sop.readinessScore}%`} accent /><Meta label="Est. time" value={sop.estimatedCompletionTime} /></div></div>
+          <div className="border-b border-border pb-6"><div className="mb-4 flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-400">Ready for review</span>{source && <span className="text-[10px] text-muted-foreground">{source === "ai" ? "Generated with AI" : "Local fallback"}</span>}</div><span className="font-mono text-[10px] text-muted-foreground">{sop.documentId}</span></div><h2 className="text-2xl font-semibold tracking-tight">{sop.title}</h2><div className="mt-5 grid grid-cols-3 gap-3 text-xs"><Meta label="Version" value={sop.version} /><Meta label="Readiness" value={`${sop.readinessScore}%`} accent /><Meta label="Est. time" value={sop.estimatedCompletionTime} /></div></div>
           <Section title="1. Purpose"><p>{sop.purpose}</p></Section><Section title="2. Scope"><p>{sop.scope}</p></Section>
           <Section title="3. Roles and responsibilities"><div className="overflow-hidden rounded-lg border border-border">{sop.roles.map((item) => <div key={item.role} className="grid gap-1 border-b border-border p-3 last:border-0 sm:grid-cols-[8rem_1fr]"><strong className="text-foreground">{item.role}</strong><span>{item.responsibility}</span></div>)}</div></Section>
           <Section title="4. Prerequisites"><List items={sop.prerequisites} /></Section>

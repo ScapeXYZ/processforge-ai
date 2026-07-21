@@ -20,6 +20,7 @@ function CreateWorkspace() {
   const initial = useMemo(() => searchParams.get("example") === "refund" ? fromTemplate(refundTemplate) : { ...emptyValues, description: searchParams.get("description") ?? "" }, [searchParams]);
   const [values, setValues] = useState<SopFormValues>(initial);
   const [sop, setSop] = useState<Sop | null>(null);
+  const [generationSource, setGenerationSource] = useState<"ai" | "fallback" | null>(null);
   const [revision, setRevision] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,20 +41,24 @@ function CreateWorkspace() {
         throw new Error(message);
       }
       setSop(sopSchema.parse(payload));
+      setGenerationSource("ai");
       setRevision(next);
     } catch (cause) {
-      setSop(generateMockSop(values, next));
-      setRevision(next);
-      const message = cause instanceof Error ? cause.message : "The AI service could not generate this SOP.";
-      setError(`${message} A local fallback draft is shown. Retry when ready.`);
+      if (!sop) {
+        setSop(generateMockSop(values, next));
+        setGenerationSource("fallback");
+        setRevision(next);
+      }
+      const message = cause instanceof Error ? cause.message : "Generation failed.";
+      setError(`${message} Please retry.`);
     } finally {
       setIsLoading(false);
     }
   };
-  const clear = () => { setSop(null); setRevision(1); setError(null); };
-  const chooseTemplate = (template: Template) => { setValues(fromTemplate(template)); setSop(null); setRevision(1); setError(null); };
+  const clear = () => { setSop(null); setGenerationSource(null); setRevision(1); setError(null); };
+  const chooseTemplate = (template: Template) => { setValues(fromTemplate(template)); setSop(null); setGenerationSource(null); setRevision(1); setError(null); };
 
-  return <main className="relative min-h-screen overflow-hidden bg-background text-foreground"><WorkflowLogo className="pointer-events-none fixed left-1/2 top-1/2 z-0 size-[36rem] -translate-x-1/2 -translate-y-1/2 text-foreground opacity-[0.035]" /><div className="relative z-10"><WorkspaceHeader /><div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[15rem_minmax(22rem,0.85fr)_minmax(28rem,1.3fr)]"><TemplateSidebar onSelect={chooseTemplate} /><SopForm values={values} onChange={setValues} onSubmit={generate} isGenerated={Boolean(sop)} isLoading={isLoading} error={error} /><SopPreview sop={sop} onRegenerate={generate} onClear={clear} isLoading={isLoading} /></div></div></main>;
+  return <main className="relative min-h-screen overflow-hidden bg-background text-foreground"><WorkflowLogo className="pointer-events-none fixed left-1/2 top-1/2 z-0 size-[36rem] -translate-x-1/2 -translate-y-1/2 text-foreground opacity-[0.035]" /><div className="relative z-10"><WorkspaceHeader /><div className="grid min-h-[calc(100vh-4rem)] lg:grid-cols-[15rem_minmax(22rem,0.85fr)_minmax(28rem,1.3fr)]"><TemplateSidebar onSelect={chooseTemplate} /><SopForm values={values} onChange={setValues} onSubmit={generate} isGenerated={Boolean(sop)} isLoading={isLoading} error={error} /><SopPreview sop={sop} source={generationSource} onRegenerate={generate} onClear={clear} isLoading={isLoading} /></div></div></main>;
 }
 
 function fromTemplate(template: Template): SopFormValues { return { title: template.title, industry: template.industry, department: template.department, description: template.description, audience: template.audience, detailLevel: "standard" }; }
