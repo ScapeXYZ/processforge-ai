@@ -1,7 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { Check, Clipboard, Download, FileJson, FileText, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { exportSopDocx } from "@/lib/export-sop-docx";
+import { exportSopJson } from "@/lib/export-sop-json";
+import { exportSopPdf } from "@/lib/export-sop-pdf";
 import type { Sop } from "@/lib/sop-schema";
 import type { SopFormValues } from "./sop-form";
 
@@ -47,7 +51,24 @@ export function generateMockSop(values: SopFormValues, revision = 1): Sop {
 function sopToText(sop: Sop) { return [sop.title, `Document ID: ${sop.documentId} | Version: ${sop.version}`, "", "PURPOSE", sop.purpose, "", "SCOPE", sop.scope, "", "PROCEDURE", ...sop.procedureSteps.map((step) => `${step.stepNumber}. ${step.title}\nOwner: ${step.owner}\n${step.instruction}\nEvidence: ${step.evidence}`), "", "QUALITY CONTROL", ...sop.qualityChecklist.map((item) => `- ${item}`)].join("\n"); }
 
 export function SopPreview({ sop, source, onRegenerate, onClear, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; isLoading: boolean }) {
+  const [exporting, setExporting] = useState<"PDF" | "DOCX" | "JSON" | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const copy = async () => { if (sop) await navigator.clipboard.writeText(sopToText(sop)); };
+  const runExport = async (format: "PDF" | "DOCX" | "JSON") => {
+    if (!sop || exporting) return;
+    setExporting(format);
+    setExportError(null);
+    try {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+      if (format === "PDF") exportSopPdf(sop);
+      if (format === "DOCX") await exportSopDocx(sop);
+      if (format === "JSON") exportSopJson(sop);
+    } catch {
+      setExportError("Export failed. Please try again.");
+    } finally {
+      setExporting(null);
+    }
+  };
   return (
     <section className="min-w-0 border-t border-border/80 bg-card/30 lg:border-l lg:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/80 px-4 py-3 sm:px-5">
@@ -71,7 +92,12 @@ export function SopPreview({ sop, source, onRegenerate, onClear, isLoading }: { 
           <Section title="9. Agent-ready JSON preview"><pre className="max-h-60 overflow-auto rounded-lg border border-border bg-card p-4 font-mono text-[10px] leading-5 text-emerald-300/80">{JSON.stringify(sop.agentReadyJson, null, 2)}</pre></Section>
         </div>
       </article>}
-      <div className="flex flex-wrap items-center gap-2 border-t border-border/80 p-3 sm:px-5"><span className="mr-auto text-[11px] text-muted-foreground">Export becomes available after review.</span>{[{ label: "PDF", icon: FileText }, { label: "DOCX", icon: Download }, { label: "JSON", icon: FileJson }].map(({ label, icon: Icon }) => <Button key={label} variant="outline" size="sm" disabled><Icon /> {label}</Button>)}</div>
+      <div className="flex flex-wrap items-center gap-2 border-t border-border/80 p-3 sm:px-5">
+        <span className={`mr-auto text-[11px] ${exportError ? "text-amber-400" : "text-muted-foreground"}`} role={exportError ? "alert" : undefined}>{exportError ?? (exporting ? `Preparing ${exporting} export...` : sop ? "Export this reviewed SOP." : "Generate an SOP to enable exports.")}</span>
+        <Button variant="outline" size="sm" onClick={() => runExport("PDF")} disabled={!sop || Boolean(exporting)}><FileText /> PDF</Button>
+        <Button variant="outline" size="sm" onClick={() => runExport("DOCX")} disabled={!sop || Boolean(exporting)}><Download /> DOCX</Button>
+        <Button variant="outline" size="sm" onClick={() => runExport("JSON")} disabled={!sop || Boolean(exporting)}><FileJson /> JSON</Button>
+      </div>
     </section>
   );
 }

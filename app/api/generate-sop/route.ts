@@ -5,9 +5,10 @@ import { buildSopPrompt, SOP_SYSTEM_PROMPT } from "@/lib/sop-prompt";
 import { sopRequestSchema, sopSchema } from "@/lib/sop-schema";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 90;
 
 export async function POST(request: Request) {
+  const startedAt = Date.now();
   let body: unknown;
 
   try {
@@ -27,7 +28,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const openai = new OpenAI({ apiKey, timeout: 55_000, maxRetries: 1 });
+    const openai = new OpenAI({ apiKey, timeout: 90_000, maxRetries: 1 });
     const response = await openai.responses.parse({
       model: "gpt-5-mini",
       store: false,
@@ -42,11 +43,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json(response.output_parsed);
   } catch (error: unknown) {
+    logProviderError(error, startedAt);
     if (error instanceof OpenAI.RateLimitError) {
       return errorResponse("Generation is busy right now. Please wait a moment and retry.", 429);
     }
     if (error instanceof OpenAI.APIConnectionTimeoutError) {
-      return errorResponse("Generation timed out. Please retry.", 504);
+      return errorResponse("Generation took too long. Please retry.", 504);
     }
     if (error instanceof OpenAI.APIError) {
       return errorResponse("The AI provider could not complete the request. Please retry.", 502);
@@ -57,4 +59,13 @@ export async function POST(request: Request) {
 
 function errorResponse(message: string, status: number) {
   return NextResponse.json({ error: message }, { status });
+}
+
+function logProviderError(error: unknown, startedAt: number): void {
+  console.error({
+    errorName: error instanceof Error ? error.name : "UnknownError",
+    httpStatus: error instanceof OpenAI.APIError ? error.status : null,
+    errorCode: error instanceof OpenAI.APIError ? error.code : null,
+    requestDurationMs: Date.now() - startedAt,
+  });
 }

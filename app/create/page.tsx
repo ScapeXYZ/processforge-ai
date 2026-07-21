@@ -49,8 +49,8 @@ function CreateWorkspace() {
         setGenerationSource("fallback");
         setRevision(next);
       }
-      const message = cause instanceof Error ? cause.message : "Generation failed.";
-      setError(`${message} Please retry.`);
+      const message = cause instanceof Error ? cause.message : "Generation failed. Please retry.";
+      setError(message);
     } finally {
       setIsLoading(false);
     }
