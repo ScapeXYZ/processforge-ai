@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { SopForm, type SopFormValues } from "@/components/processforge/sop-form";
 import { generateMockSop, SopPreview } from "@/components/processforge/sop-preview";
@@ -8,6 +8,7 @@ import { sopSchema, type Sop } from "@/lib/sop-schema";
 import { refundTemplate, TemplateSidebar, type Template } from "@/components/processforge/template-sidebar";
 import { WorkflowLogo } from "@/components/processforge/workflow-logo";
 import { WorkspaceHeader } from "@/components/processforge/workspace-header";
+import { getSopHistoryEntry, saveSopToHistory } from "@/lib/sop-history";
 
 const emptyValues: SopFormValues = { title: "", industry: "", department: "", description: "", audience: "", detailLevel: "standard" };
 
@@ -24,6 +25,23 @@ function CreateWorkspace() {
   const [revision, setRevision] = useState(1);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const historyId = searchParams.get("history");
+
+  useEffect(() => {
+    if (!historyId) return;
+    const timer = window.setTimeout(() => {
+      const entry = getSopHistoryEntry(historyId);
+      if (!entry) {
+        setError("This saved SOP is no longer available.");
+        return;
+      }
+      setValues((current) => ({ ...current, title: entry.title, industry: entry.industry, department: entry.department }));
+      setSop(entry.sop);
+      setGenerationSource("ai");
+      setError(null);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [historyId]);
   const generate = async () => {
     if (isLoading) return;
     const next = sop ? revision + 1 : revision;
@@ -40,9 +58,11 @@ function CreateWorkspace() {
         const message = typeof payload === "object" && payload !== null && "error" in payload && typeof payload.error === "string" ? payload.error : "The AI service could not generate this SOP.";
         throw new Error(message);
       }
-      setSop(sopSchema.parse(payload));
+      const generatedSop = sopSchema.parse(payload);
+      setSop(generatedSop);
       setGenerationSource("ai");
       setRevision(next);
+      saveSopToHistory({ sop: generatedSop, industry: values.industry, department: values.department });
     } catch (cause) {
       if (!sop) {
         setSop(generateMockSop(values, next));
