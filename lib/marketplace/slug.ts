@@ -1,0 +1,1 @@
+export function createTemplateSlug(value:string,suffix=""){const base=value.normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"").slice(0,80)||"sop-template";const clean=suffix.toLowerCase().replace(/[^a-z0-9]/g,"").slice(0,10);return clean?`${base}-${clean}`:base}

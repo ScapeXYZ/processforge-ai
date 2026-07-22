@@ -13,6 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
   title: "ProcessForge AI — Build reliable SOPs",
   description: "Turn business processes into clear, structured operating procedures.",
 };

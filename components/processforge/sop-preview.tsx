@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Clipboard, Download, FileJson, FileText, Info, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
+import { Check, Clipboard, Download, FileJson, FileText, Info, RotateCcw, Save, Sparkles, Store, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { exportSopDocx } from "@/lib/export-sop-docx";
 import { exportSopJson } from "@/lib/export-sop-json";
@@ -12,6 +12,7 @@ import { calculateReadinessScore } from "@/lib/readiness-score";
 import { SopAiEditor } from "@/components/processforge/sop-ai-editor";
 import { SopAnalyticsCard } from "@/components/processforge/sop-analytics-card";
 import { saveSopAnalytics } from "@/lib/cloud/sop-service";
+import { getCloudLink } from "@/lib/cloud/sync-manager";
 
 export function generateMockSop(values: SopFormValues, revision = 1): Sop {
   const title = values.title.trim() || "Untitled process";
@@ -86,6 +87,7 @@ export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, on
           <Button variant="ghost" size="sm" onClick={copy} disabled={!sop}><Clipboard /> Copy</Button>
           <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={!sop || isLoading}><RotateCcw /> Regenerate</Button>
           <Button variant="ghost" size="sm" onClick={() => { setVersionMessage(onSaveVersion() ? "Version saved." : "Could not save version."); }} disabled={!sop || isLoading}><Save /> Save version</Button>
+          <Button variant="ghost" size="sm" onClick={() => { if (sop && getCloudLink(sop.documentId)) window.location.assign("/templates"); else setVersionMessage("Save this SOP to the cloud before publishing."); }} disabled={!sop || isLoading}><Store /> Publish</Button>
           <Button variant="ghost" size="icon-sm" onClick={onClear} disabled={!sop || isLoading} aria-label="Clear SOP"><Trash2 /></Button>
         </div>
       </div>

@@ -1,0 +1,3 @@
+import type { Metadata } from "next";import { TemplateDetail } from "@/components/processforge/template-detail";
+export async function generateMetadata({params}:{params:Promise<{slug:string}>}):Promise<Metadata>{const{slug}=await params;const title=slug.split("-").map(x=>x.charAt(0).toUpperCase()+x.slice(1)).join(" ");return{title:`${title} | ProcessForge Marketplace`,description:"Preview and customize this public ProcessForge SOP template.",alternates:{canonical:`/marketplace/${slug}`},openGraph:{title,description:"Public SOP template from ProcessForge AI",type:"article"}}}
+export default async function TemplatePage({params}:{params:Promise<{slug:string}>}){const{slug}=await params;return <TemplateDetail slug={slug}/>}

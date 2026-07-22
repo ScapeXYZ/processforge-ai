@@ -1,0 +1,1 @@
+import type { Metadata } from "next";import { CreatorProfile } from "@/components/processforge/creator-profile";export const metadata:Metadata={title:"Marketplace Creator | ProcessForge AI",robots:{index:true,follow:true}};export default async function CreatorPage({params}:{params:Promise<{id:string}>}){const{id}=await params;return <CreatorProfile id={id}/>}

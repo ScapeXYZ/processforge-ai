@@ -27,6 +27,21 @@ export type Database = {
         Update: { name?: string; mime_type?: string | null; size_bytes?: number | null; word_count?: number | null; character_count?: number | null; enabled?: boolean; metadata?: Json; updated_at?: string };
         Relationships: [];
       };
+      template_categories: {
+        Row:{id:string;name:string;slug:string;description:string|null;created_at:string};Insert:{id?:string;name:string;slug:string;description?:string|null};Update:{name?:string;slug?:string;description?:string|null};Relationships:[];
+      };
+      marketplace_creator_profiles: {
+        Row:{user_id:string;display_name:string;joined_at:string};Insert:{user_id:string;display_name:string;joined_at?:string};Update:{display_name?:string};Relationships:[];
+      };
+      sop_templates: {
+        Row:{id:string;creator_id:string;source_sop_id:string|null;title:string;slug:string;summary:string;description:string;industry:string|null;department:string|null;category_id:string|null;template_content:Json;preview_content:string;visibility:string;publication_status:string;moderation_status:string;version:string;compliance_framework:string|null;risk_level:string|null;is_free:boolean;paid_ready:boolean;usage_count:number;favorite_count:number;rating_average:number;rating_count:number;created_at:string;updated_at:string;published_at:string|null};
+        Insert:{id?:string;creator_id:string;source_sop_id?:string|null;title:string;slug:string;summary:string;description:string;industry?:string|null;department?:string|null;category_id?:string|null;template_content:Json;preview_content:string;visibility?:string;publication_status?:string;moderation_status?:string;version?:string;compliance_framework?:string|null;risk_level?:string|null;is_free?:boolean;paid_ready?:boolean;published_at?:string|null};
+        Update:{title?:string;slug?:string;summary?:string;description?:string;industry?:string|null;department?:string|null;category_id?:string|null;template_content?:Json;preview_content?:string;visibility?:string;publication_status?:string;moderation_status?:string;version?:string;compliance_framework?:string|null;risk_level?:string|null;published_at?:string|null};Relationships:[];
+      };
+      template_tags:{Row:{template_id:string;tag:string};Insert:{template_id:string;tag:string};Update:{tag?:string};Relationships:[]};
+      template_ratings:{Row:{template_id:string;user_id:string;rating:number;created_at:string;updated_at:string};Insert:{template_id:string;user_id:string;rating:number};Update:{rating:number;updated_at?:string};Relationships:[]};
+      template_favorites:{Row:{template_id:string;user_id:string;created_at:string};Insert:{template_id:string;user_id:string};Update:never;Relationships:[]};
+      template_usage:{Row:{id:string;template_id:string;user_id:string|null;event_type:string;session_key:string|null;created_at:string};Insert:{id?:string;template_id:string;user_id?:string|null;event_type:"view"|"copy";session_key?:string|null};Update:never;Relationships:[]};
       workspaces: {
         Row: { id: string; name: string; owner_id: string; is_personal: boolean; created_at: string; updated_at: string };
         Insert: { id?: string; name: string; owner_id: string; is_personal?: boolean; created_at?: string; updated_at?: string };
@@ -58,7 +73,7 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: Record<string, never>;
+    Views: { public_marketplace_templates:{Row:Omit<Database["public"]["Tables"]["sop_templates"]["Row"],"source_sop_id">;Relationships:[]} };
     Functions: {
       create_workspace: { Args: { workspace_name:string }; Returns:string };
       accept_workspace_invitation: { Args: { invitation_id:string }; Returns:string };
