@@ -10,6 +10,7 @@
     "verify:agent": "node scripts/verify-agent-x402.mjs",
     "verify:x402": "node scripts/verify-agent-x402.mjs",
     "verify:release": "node scripts/verify-release.mjs",
+    "verify:deployment": "node scripts/verify-deployment.mjs",
     "seed:demo": "node scripts/seed-demo-data.mjs"
   },
   "dependencies": {

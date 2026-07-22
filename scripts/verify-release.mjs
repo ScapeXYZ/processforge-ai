@@ -2,16 +2,21 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const baseUrl = process.env.RELEASE_TEST_BASE_URL || process.env.AGENT_TEST_BASE_URL || "http://localhost:3000";
+const configuredTimeout = Number(process.env.VERIFY_TIMEOUT_MS ?? 60_000);
+const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 60_000;
 const expectedNetwork = "eip155:1952";
 const results = [];
 const pass = (name, detail = "") => results.push({ name, status: "pass", detail });
 const assert = (condition, name, detail) => { if (!condition) throw new Error(`${name}: ${detail}`); pass(name, detail); };
-const request = async (path, init) => { const response = await fetch(`${baseUrl}${path}`, { redirect: "manual", ...init }); const text = await response.text(); let body = null; try { body = JSON.parse(text); } catch { body = text; } return { response, body, text }; };
+const request = async (path, init = {}, check = path) => { const url = `${baseUrl}${path}`; try { const response = await fetch(url, { redirect: "manual", ...init, signal: AbortSignal.timeout(timeoutMs) }); const text = await response.text(); let body = null; try { body = JSON.parse(text); } catch { body = text; } return { response, body, text }; } catch (error) { if (error instanceof DOMException && error.name === "TimeoutError") throw new Error(`Timed out after ${timeoutMs} ms while checking ${check}: ${url}`); throw new Error(`Request failed while checking ${check}: ${url}. ${error instanceof Error ? error.message : "Unknown network error."}`); } };
+
+try {
 
 const home = await request("/"); assert(home.response.status === 200, "Application responds", `HTTP ${home.response.status}`);
 for (const header of ["content-security-policy", "x-content-type-options", "referrer-policy", "permissions-policy", "x-frame-options"]) assert(Boolean(home.response.headers.get(header)), `Security header ${header}`, "present");
 const metadata = await request("/api/agent"); assert(metadata.response.status === 200, "Agent metadata", `HTTP ${metadata.response.status}`);
 const health = await request("/api/agent/health"); assert(health.response.status === 200, "Agent health", `HTTP ${health.response.status}`);
+const appHealth = await request("/api/health"); assert(appHealth.response.status === 200, "Application health", `HTTP ${appHealth.response.status}`);
 const retiredInvitations = await request("/api/invitations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredInvitations.response.status === 410 && retiredInvitations.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation API", `HTTP ${retiredInvitations.response.status}`);
 const retiredAcceptance = await request("/api/invitations/accept", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredAcceptance.response.status === 410 && retiredAcceptance.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation acceptance API", `HTTP ${retiredAcceptance.response.status}`);
 const removedAcceptancePage = await request("/invitations/accept"); assert(removedAcceptancePage.response.status === 404, "Removed invitation acceptance page", `HTTP ${removedAcceptancePage.response.status}`);
@@ -42,10 +47,10 @@ const routeExpectations = [
 for (const [path, access] of routeExpectations) { const route = await request(path); assert(route.response.status !== 404, `Route ${path}`, `${access}; HTTP ${route.response.status}`); }
 
 const envExample = readFileSync(resolve(".env.example"), "utf8");
-const documentedEnv = ["OPENAI_API_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "APP_BASE_URL", "MARKETPLACE_AUTO_APPROVE", "OKX_X402_ENABLED", "OKX_X402_NETWORK", "OKX_X402_PAY_TO_ADDRESS", "OKX_X402_ASSET", "OKX_X402_PRICE", "OKX_X402_FACILITATOR_URL", "OKX_X402_API_KEY", "OKX_X402_SECRET_KEY", "OKX_X402_PASSPHRASE", "OKX_X402_TIMEOUT_SECONDS", "ENABLE_RELEASE_CHECK", "LOG_LEVEL", "RATE_LIMIT_STORE"];
+const documentedEnv = ["OPENAI_API_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "APP_BASE_URL", "MARKETPLACE_AUTO_APPROVE", "AGENT_PAID_GENERATION_ENABLED", "OKX_X402_ENABLED", "OKX_X402_NETWORK", "OKX_X402_PAY_TO_ADDRESS", "OKX_X402_ASSET", "OKX_X402_PRICE", "OKX_X402_FACILITATOR_URL", "OKX_X402_API_KEY", "OKX_X402_SECRET_KEY", "OKX_X402_PASSPHRASE", "OKX_X402_TIMEOUT_SECONDS", "ENABLE_RELEASE_CHECK", "LOG_LEVEL", "RATE_LIMIT_STORE", "DEPLOYMENT_VERSION", "GIT_COMMIT_SHA"];
 assert(documentedEnv.every(name => new RegExp(`^${name}=`, "m").test(envExample)), "Environment documentation", `${documentedEnv.length} variables present`);
 assert(!/^NEXT_PUBLIC_(APP|SITE)_URL=/m.test(envExample), "Server-only application URL", "no public application URL variable");
-for (const file of ["docs/PRODUCTION_DEPLOYMENT.md", "docs/PRODUCTION_CHECKLIST.md", "app/privacy/page.tsx", "app/terms/page.tsx", "app/acceptable-use/page.tsx", "app/ai-disclaimer/page.tsx", "app/data-handling/page.tsx"]) assert(existsSync(resolve(file)), `Required production artifact ${file}`, "present");
+for (const file of ["docs/PRODUCTION_DEPLOYMENT.md", "docs/PRODUCTION_CHECKLIST.md", "docs/CUSTOM_DOMAIN_CHECKLIST.md", ".env.production.example", ".github/workflows/ci.yml", "scripts/verify-deployment.mjs", "app/privacy/page.tsx", "app/terms/page.tsx", "app/acceptable-use/page.tsx", "app/ai-disclaimer/page.tsx", "app/data-handling/page.tsx"]) assert(existsSync(resolve(file)), `Required production artifact ${file}`, "present");
 const x402ConfigSource = readFileSync(resolve("lib/agent/config.ts"), "utf8");
 assert(x402ConfigSource.includes("!production &&") && x402ConfigSource.includes('config.network !== "eip155:196"'), "Production x402 boundary", "mock excluded; mainnet enforced");
 const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql"];
@@ -53,3 +58,7 @@ assert(migrations.every(file => existsSync(resolve("supabase/migrations", file))
 assert(existsSync(resolve(".next/BUILD_ID")) || existsSync(resolve(".next/build-manifest.json")), "Production build artifact", "run npm run build before release verification");
 
 console.log(JSON.stringify({ status: "pass", base_url: baseUrl, checks: results }, null, 2));
+} catch (error) {
+  console.error(`Release verification failed: ${error instanceof Error ? error.message : "Unknown error."}`);
+  process.exitCode = 1;
+}

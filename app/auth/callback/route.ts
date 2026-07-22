@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { safeReturnUrl } from "@/lib/auth/return-url";
 import { createClient } from "@/lib/supabase/server";
+import { getAppBaseUrl } from "@/lib/env/server";
 
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
@@ -9,8 +10,8 @@ export async function GET(request: NextRequest) {
   if (code) {
     try {
       const { error } = await (await createClient()).auth.exchangeCodeForSession(code);
-      if (!error) return NextResponse.redirect(new URL(next, request.url));
+      if (!error) return NextResponse.redirect(new URL(next, getAppBaseUrl()));
     } catch { /* Redirect safely below. */ }
   }
-  return NextResponse.redirect(new URL("/login?error=callback", request.url));
+  return NextResponse.redirect(new URL("/login?error=callback", getAppBaseUrl()));
 }

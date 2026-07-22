@@ -33,6 +33,8 @@ export async function POST(request: Request) {
   try { json = JSON.parse(raw); } catch { return agentError("INVALID_REQUEST", "Request body must be valid JSON.", 400, requestId); }
   const parsed = agentSopRequestSchema.safeParse(json);
   if (!parsed.success) return Response.json({ error: { code: "INVALID_REQUEST", message: "Request validation failed.", request_id: requestId, details: parsed.error.issues.map(issue => ({ path: issue.path.join("."), message: issue.message })) } }, { status: 400 });
+  const config = getX402Config();
+  if (!config.serviceEnabled) return agentError("SERVICE_BUSY", "Paid SOP generation is temporarily disabled.", 503, requestId);
   const hash = stableHash(parsed.data);
   const existing = await findAgentRequest(idempotencyKey);
   if (existing) {
@@ -41,7 +43,6 @@ export async function POST(request: Request) {
     if (["processing", "settling"].includes(String(existing.status))) return agentError("REQUEST_IN_PROGRESS", "This request is already being processed.", 409, String(existing.id));
   }
   const effectiveId = existing ? String(existing.id) : requestId;
-  const config = getX402Config();
   try { assertSafeProductionConfig(config); } catch { return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment verification is temporarily unavailable.", 503, effectiveId); }
   const resourceUrl = `${getAppBaseUrl()}/api/agent/generate-sop`;
   if (!existing) await createAgentRequest({ id: effectiveId, service: AGENT_SERVICE, idempotency_key: idempotencyKey, request_hash: hash, status: "payment_required", network: config.network, price: config.price, asset: config.asset });

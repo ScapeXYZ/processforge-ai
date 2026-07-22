@@ -3,7 +3,7 @@ export const AGENT_VERSION = "1.0.0";
 export const AGENT_SCHEMA_VERSION = "1.0";
 
 export type X402Config = {
-  enabled: boolean; mock: boolean; ready: boolean; provider: "mock" | "okx"; network: `eip155:${number}`;
+  enabled: boolean; serviceEnabled: boolean; mock: boolean; ready: boolean; provider: "mock" | "okx"; network: `eip155:${number}`;
   payTo: string; asset: string; price: string; facilitatorUrl: string;
   apiKey: string; secretKey: string; passphrase: string; timeoutSeconds: number;
 };
@@ -15,7 +15,7 @@ export function getX402Config(): X402Config {
   const hasSellerCredentials = Boolean(process.env.OKX_X402_API_KEY?.trim() && process.env.OKX_X402_SECRET_KEY?.trim() && process.env.OKX_X402_PASSPHRASE?.trim());
   const mock = !production && (!enabled || !hasSellerCredentials || process.env.OKX_X402_MOCK === "true");
   const config = {
-    enabled, mock, provider: mock ? "mock" as const : "okx" as const, network,
+    enabled, serviceEnabled: process.env.AGENT_PAID_GENERATION_ENABLED !== "false", mock, provider: mock ? "mock" as const : "okx" as const, network,
     payTo: process.env.OKX_X402_PAY_TO_ADDRESS?.trim() || (mock ? "0x0000000000000000000000000000000000000001" : ""),
     asset: process.env.OKX_X402_ASSET?.trim() || (mock ? "0x0000000000000000000000000000000000000002" : ""),
     price: process.env.OKX_X402_PRICE?.trim() || (mock ? "10000" : ""),
