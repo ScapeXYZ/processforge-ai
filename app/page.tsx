@@ -190,7 +190,7 @@ export default function Home() {
           <div className="flex items-center gap-2.5 font-semibold">
             <WorkflowLogo className="size-6 text-emerald-500" /> ProcessForge AI
           </div>
-          <p className="text-sm text-muted-foreground">Built for reliable business execution.</p>
+          <nav aria-label="Legal" className="flex flex-wrap gap-x-4 gap-y-2 text-sm text-muted-foreground"><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="/acceptable-use">Acceptable Use</a><a href="/ai-disclaimer">AI Disclaimer</a><a href="/data-handling">Data Handling</a></nav>
         </div>
       </footer>
     </main>

@@ -4,6 +4,8 @@ import { NextResponse } from "next/server";
 import { buildSopPrompt, SOP_SYSTEM_PROMPT } from "@/lib/sop-prompt";
 import { sopRequestSchema, sopSchema } from "@/lib/sop-schema";
 import { requireUser } from "@/lib/supabase/require-user";
+import { checkRateLimit, requestClientKey } from "@/lib/security/rate-limit";
+import { readJsonWithLimit, RequestPayloadError } from "@/lib/security/request";
 
 export const runtime = "nodejs";
 export const maxDuration = 90;
@@ -12,12 +14,14 @@ export async function POST(request: Request) {
   const startedAt = Date.now();
   const auth = await requireUser();
   if (!auth.ok) return errorResponse(auth.message, auth.status);
+  const limited = checkRateLimit(requestClientKey(request, "generate-sop", auth.userId), 10, 60_000);
+  if (!limited.allowed) return NextResponse.json({ error: "Too many generation requests. Please retry shortly." }, { status: 429, headers: { "retry-after": String(limited.retryAfterSeconds) } });
   let body: unknown;
 
   try {
-    body = await request.json();
-  } catch {
-    return errorResponse("Request body must be valid JSON.", 400);
+    body = await readJsonWithLimit(request, 128_000);
+  } catch (error) {
+    return errorResponse(error instanceof RequestPayloadError ? error.message : "Request body must be valid JSON.", error instanceof RequestPayloadError ? error.status : 400);
   }
 
   const parsedRequest = sopRequestSchema.safeParse(body);

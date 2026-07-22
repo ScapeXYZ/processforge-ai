@@ -1,7 +1,9 @@
 import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { agentError, agentSopRequestSchema } from "@/lib/agent/contract";
-import { AGENT_SCHEMA_VERSION, AGENT_SERVICE, getX402Config } from "@/lib/agent/config";
+import { AGENT_SCHEMA_VERSION, AGENT_SERVICE, assertSafeProductionConfig, getX402Config } from "@/lib/agent/config";
+import { getAppBaseUrl } from "@/lib/env/server";
+import { securityLog } from "@/lib/security/logger";
 import { stableHash } from "@/lib/agent/crypto";
 import { generateAgentSop } from "@/lib/agent/generate";
 import { generateMockAgentSop } from "@/lib/agent/mock";
@@ -40,7 +42,8 @@ export async function POST(request: Request) {
   }
   const effectiveId = existing ? String(existing.id) : requestId;
   const config = getX402Config();
-  const resourceUrl = `${new URL(request.url).origin}/api/agent/generate-sop`;
+  try { assertSafeProductionConfig(config); } catch { return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment verification is temporarily unavailable.", 503, effectiveId); }
+  const resourceUrl = `${getAppBaseUrl()}/api/agent/generate-sop`;
   if (!existing) await createAgentRequest({ id: effectiveId, service: AGENT_SERVICE, idempotency_key: idempotencyKey, request_hash: hash, status: "payment_required", network: config.network, price: config.price, asset: config.asset });
   log("request_received", effectiveId, { duration_ms: Date.now() - startedAt });
   const paymentHeader = request.headers.get("payment-signature") || request.headers.get("x-payment");
@@ -93,5 +96,5 @@ export async function POST(request: Request) {
   } finally { release(); }
 }
 
-function log(event: string, requestId: string, data: Record<string, unknown> = {}) { console.info(JSON.stringify({ event, request_id: requestId, ...data })); }
+function log(event: string, requestId: string, data: Record<string, unknown> = {}) { securityLog(event, { request_id: requestId, route: "/api/agent/generate-sop", ...data }); }
 function safeError(error: unknown) { return error instanceof Error ? error.message.split(":")[0] : "UnknownError"; }

@@ -116,4 +116,13 @@ Publishing requires a public title, summary, description, category, tags, previe
 
 Moderation states are `draft`, `pending_review`, `approved`, `rejected`, and `archived`. Set server-only `MARKETPLACE_AUTO_APPROVE=true` only for local development; production should leave it false until an administrator moderation workflow is implemented. Apply [`supabase/migrations/202607220009_public_template_marketplace.sql`](supabase/migrations/202607220009_public_template_marketplace.sql) after the prior migrations.
 
-Set `NEXT_PUBLIC_SITE_URL` to the final custom HTTPS origin for canonical and Open Graph URLs. Do not depend on a temporary `vercel.app` hostname. Marketplace records include `is_free` and `paid_ready` fields so a future OKX pay-per-use entitlement layer can be added without changing public SOP content. Payments, wallet handling, settlement, and paid access are not implemented in this phase.
+Set the server-only `APP_BASE_URL` to the final custom HTTPS origin for canonical and Open Graph URLs. Do not depend on a temporary `vercel.app` hostname. Marketplace records include `is_free` and `paid_ready` fields so a future OKX pay-per-use entitlement layer can be added without changing public SOP content. Production x402 access remains disabled until official credentials are configured.
+# Production security and deployment
+
+Production uses the server-only `APP_BASE_URL` for canonical, agent, health, and payment resource URLs. It must be a custom HTTPS origin; localhost is the documented development fallback and an unsupported `vercel.app` address must not be submitted to OKX. Server readiness validates Supabase, service-role, OpenAI, URL, logging, and x402 configuration without printing values.
+
+Global CSP, clickjacking, content-type, referrer, permissions, and production HSTS headers are configured in `next.config.ts`. Generation, AI editing, knowledge processing, and agent endpoints enforce bounded inputs and server-side controls. The current general-purpose limiter is process-local; multi-instance production deployments must provide a distributed store before launch.
+
+x402 mock payment remains development-only on `eip155:1952`. Production cannot select the mock provider and requires the official provider, `eip155:196`, recipient, asset, amount, facilitator, and seller credentials. Missing configuration fails closed.
+
+See [Production deployment](docs/PRODUCTION_DEPLOYMENT.md) and [Production checklist](docs/PRODUCTION_CHECKLIST.md). Public legal pages are drafts requiring counsel review; ProcessForge does not claim ISO, SOC 2, GDPR, or regulatory certification. Workspace email invitations are not included in the current release.

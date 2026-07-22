@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { extractRawText } from "mammoth";
 import { PasswordException, PDFParse } from "pdf-parse";
 import { countWords, normalizeDocumentText } from "@/lib/document-text";
-import { hasValidFileSignature, validateKnowledgeFile } from "@/lib/document-validation";
+import { hasValidFileSignature, MAX_FILE_SIZE, validateKnowledgeFile } from "@/lib/document-validation";
 import type { KnowledgeDocumentType } from "@/types/knowledge-base";
 import { requireUser } from "@/lib/supabase/require-user";
+import { checkRateLimit, requestClientKey } from "@/lib/security/rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,6 +13,9 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   const auth = await requireUser();
   if (!auth.ok) return errorResponse(auth.message, auth.status);
+  const limited = checkRateLimit(requestClientKey(request, "knowledge-upload", auth.userId), 10, 10 * 60_000);
+  if (!limited.allowed) return NextResponse.json({ error: "Upload limit reached. Please retry later." }, { status: 429, headers: { "retry-after": String(limited.retryAfterSeconds) } });
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_SIZE + 256_000) return errorResponse("Upload payload is too large.", 413);
   let formData: FormData;
   try { formData = await request.formData(); } catch { return errorResponse("Upload data could not be read.", 400); }
   const file = formData.get("file");

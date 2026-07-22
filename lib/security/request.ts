@@ -1,0 +1,3 @@
+import "server-only";
+export class RequestPayloadError extends Error { constructor(public readonly status: 400 | 413, message: string) { super(message); } }
+export async function readJsonWithLimit(request: Request, maxBytes: number): Promise<unknown> { const declared = Number(request.headers.get("content-length") ?? 0); if (declared > maxBytes) throw new RequestPayloadError(413, "Request payload is too large."); const text = await request.text(); if (new TextEncoder().encode(text).byteLength > maxBytes) throw new RequestPayloadError(413, "Request payload is too large."); try { return JSON.parse(text) as unknown; } catch { throw new RequestPayloadError(400, "Request body must be valid JSON."); } }
