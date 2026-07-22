@@ -6,6 +6,7 @@ import type { Database } from "@/types/database";
 import type { Json } from "@/types/json";
 import { activeWorkspace, getActiveWorkspaceId } from "@/lib/cloud/workspace-service";
 import type { SopAnalytics } from "@/types/sop-analytics";
+import type { SopCompliance } from "@/types/sop-compliance";
 
 export type CloudSop = { row: SopRow; sop: Sop };
 export type SopContext = Partial<{ industry: string; department: string; description: string; audience: string; detailLevel: string; createdAt: string }>;
@@ -39,7 +40,7 @@ export async function updateSop(id: string, sop: Sop, expectedUpdatedAt?: string
   const current = await auth.data.client.from("sops").select("workspace_id").eq("id", id).single();
   if (current.error || !current.data) return cloudFailure("SOP could not be found.");
   const insert = sopToInsert(sop, auth.data.userId, current.data.workspace_id, context);
-  const update: Database["public"]["Tables"]["sops"]["Update"] = { title: insert.title, industry: insert.industry, department: insert.department, description: insert.description, audience: insert.audience, detail_level: insert.detail_level, content: sop as unknown as Json, readiness_score: sop.documentReadinessScore, input_quality_score: sop.inputReadinessScore, source_notes: insert.source_notes, knowledge_source_names: insert.knowledge_source_names,analytics:insert.analytics,quality_score:insert.quality_score,risk_level:insert.risk_level,analyzed_at:insert.analyzed_at };
+  const update: Database["public"]["Tables"]["sops"]["Update"] = { title: insert.title, industry: insert.industry, department: insert.department, description: insert.description, audience: insert.audience, detail_level: insert.detail_level, content: sop as unknown as Json, readiness_score: sop.documentReadinessScore, input_quality_score: sop.inputReadinessScore, source_notes: insert.source_notes, knowledge_source_names: insert.knowledge_source_names,analytics:insert.analytics,quality_score:insert.quality_score,risk_level:insert.risk_level,analyzed_at:insert.analyzed_at,compliance_score:insert.compliance_score,audit_status:insert.audit_status,findings:insert.findings };
   let query = auth.data.client.from("sops").update(update).eq("id", id);
   if (expectedUpdatedAt) query = query.eq("updated_at", expectedUpdatedAt);
   const { data, error } = await query.select().maybeSingle();
@@ -49,6 +50,8 @@ export async function updateSop(id: string, sop: Sop, expectedUpdatedAt?: string
 }
 
 export async function saveSopAnalytics(id:string,analytics:SopAnalytics):Promise<CloudResult<true>>{const auth=await authenticatedClient();if(!auth.ok)return auth;const{error}=await auth.data.client.from("sops").update({analytics:analytics as unknown as Json,quality_score:analytics.overallQuality,risk_level:analytics.riskLevel,analyzed_at:analytics.analyzedAt}).eq("id",id);return error?cloudFailure("Analytics could not be saved."):{ok:true,data:true}}
+export async function saveSopCompliance(id:string,compliance:SopCompliance):Promise<CloudResult<true>>{const auth=await authenticatedClient();if(!auth.ok)return auth;const{error}=await auth.data.client.from("sops").update({compliance_score:compliance.complianceScore,audit_status:compliance.auditStatus,findings:compliance.findings as unknown as Json,next_review_at:compliance.nextReviewAt,last_reviewed_at:compliance.lastReviewedAt}).eq("id",id);return error?cloudFailure("Compliance analysis could not be saved."):{ok:true,data:true}}
+export async function scheduleSopReview(id:string,days:30|90|180|365):Promise<CloudResult<string>>{const auth=await authenticatedClient();if(!auth.ok)return auth;const next=new Date(Date.now()+days*86400000).toISOString();const{error}=await auth.data.client.from("sops").update({next_review_at:next,last_reviewed_at:new Date().toISOString()}).eq("id",id);return error?cloudFailure("Review schedule could not be saved."):{ok:true,data:next}}
 
 export async function setSopFlags(id: string, flags: { is_favorite?: boolean; is_archived?: boolean }): Promise<CloudResult<true>> {
   const auth = await authenticatedClient(); if (!auth.ok) return auth;

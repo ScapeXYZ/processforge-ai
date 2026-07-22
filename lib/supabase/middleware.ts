@@ -4,7 +4,7 @@ import { safeReturnUrl } from "@/lib/auth/return-url";
 import { getSupabaseConfig } from "@/lib/supabase/config";
 import type { Database } from "@/types/database";
 
-const protectedPrefixes = ["/create", "/workspace", "/workspaces", "/history", "/versions", "/knowledge-base", "/analytics", "/dashboard", "/settings"];
+const protectedPrefixes = ["/create", "/workspace", "/workspaces", "/history", "/versions", "/knowledge-base", "/analytics", "/compliance", "/dashboard", "/settings"];
 const authPages = ["/login", "/signup", "/forgot-password", "/reset-password"];
 
 export async function updateSession(request: NextRequest) {

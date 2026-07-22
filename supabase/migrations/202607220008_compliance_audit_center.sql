@@ -1,0 +1,12 @@
+begin;
+alter table public.sops add column if not exists compliance_score integer;
+alter table public.sops add column if not exists audit_status text;
+alter table public.sops add column if not exists next_review_at timestamptz;
+alter table public.sops add column if not exists last_reviewed_at timestamptz;
+alter table public.sops add column if not exists findings jsonb;
+do $$ begin alter table public.sops add constraint sops_compliance_score_check check(compliance_score is null or compliance_score between 0 and 100); exception when duplicate_object then null; end $$;
+do $$ begin alter table public.sops add constraint sops_audit_status_check check(audit_status is null or audit_status in ('not_ready','needs_review','ready')); exception when duplicate_object then null; end $$;
+create index if not exists sops_workspace_compliance_idx on public.sops(workspace_id,compliance_score desc nulls last);
+create index if not exists sops_next_review_idx on public.sops(workspace_id,next_review_at) where next_review_at is not null;
+commit;
+notify pgrst, 'reload schema';

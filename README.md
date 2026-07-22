@@ -107,3 +107,9 @@ Risk findings use five severities: Critical means the record cannot be safely ev
 Analytics recalculate when an SOP is generated, edited, restored, opened after a knowledge-source change, or manually reanalyzed. Generation and cloud synchronization continue even if analytics metadata cannot be saved. Apply [`supabase/migrations/202607220007_sop_analytics.sql`](supabase/migrations/202607220007_sop_analytics.sql) after the earlier cloud and collaboration migrations to add `analytics`, `quality_score`, `risk_level`, and `analyzed_at` while preserving existing SOP rows.
 
 Current limitations: keyword rules cannot determine whether a cited control is legally sufficient, do not replace compliance review, and may miss domain-specific terminology. Analytics are decision support, not certification or legal advice.
+
+## Compliance and Audit Center
+
+The Compliance Center evaluates process ownership, purpose, scope, responsibility separation, approvals, escalation, exception handling, KPIs, compliance notes, record retention, review cadence, controlled versions, and training validation. Scores are calculated locally and deterministically; no AI request is used for the assessment. Findings can prefill the existing AI Editor, but users must review and explicitly apply every proposed fix.
+
+Review intervals support 30, 90, 180, and 365 days. Audit reports include an executive summary, prioritized findings, corrective actions, affected sections, and the scheduled review date, and can be exported as PDF or DOCX. Apply [`supabase/migrations/202607220008_compliance_audit_center.sql`](supabase/migrations/202607220008_compliance_audit_center.sql) after the analytics migration to store compliance scores, audit status, review dates, and findings. These checks support internal governance and do not constitute certification, legal advice, or a guarantee of regulatory compliance.

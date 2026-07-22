@@ -5,6 +5,7 @@ import { CheckCircle2, LoaderCircle, Redo2, Sparkles, Undo2 } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { sopSchema, type Sop } from "@/lib/sop-schema";
+import { takeComplianceAiFix } from "@/lib/compliance/ai-fix";
 
 type EditorSection = "entire" | "purpose" | "scope" | "roles" | "prerequisites" | "procedureSteps" | "escalationRules" | "qualityChecklist" | "trainingQuiz" | "agentReadyJson";
 
@@ -33,7 +34,7 @@ export function SopAiEditor({ sop, onChange, disabled }: { sop: Sop; onChange: (
   const [redoStack, setRedoStack] = useState<Sop[]>([]);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  useEffect(() => { const receive=(event:Event)=>{const detail=(event as CustomEvent<unknown>).detail;if(typeof detail==="string"){setPrompt(detail);setMessage(null)}};window.addEventListener("processforge:editor-prompt",receive);return()=>window.removeEventListener("processforge:editor-prompt",receive); }, []);
+  useEffect(() => { const queued=takeComplianceAiFix();if(queued)window.setTimeout(()=>setPrompt(queued),0);const receive=(event:Event)=>{const detail=(event as CustomEvent<unknown>).detail;if(typeof detail==="string"){setPrompt(detail);setMessage(null)}};window.addEventListener("processforge:editor-prompt",receive);return()=>window.removeEventListener("processforge:editor-prompt",receive); }, []);
 
   const applyEdit = async () => {
     if (!prompt.trim() || isEditing || disabled) return;

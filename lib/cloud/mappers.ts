@@ -4,6 +4,7 @@ import type { KnowledgeDocument } from "@/types/knowledge-base";
 import type { Database } from "@/types/database";
 import type { Json } from "@/types/json";
 import { analyzeSop } from "@/lib/analytics/sop-analytics";
+import { analyzeCompliance } from "@/lib/compliance/compliance-engine";
 
 export type SopRow = Database["public"]["Tables"]["sops"]["Row"];
 export type SopInsert = Database["public"]["Tables"]["sops"]["Insert"];
@@ -12,7 +13,7 @@ export type VersionRow = Database["public"]["Tables"]["sop_versions"]["Row"];
 const asJson = (value: unknown) => value as Json;
 
 export function sopToInsert(sop: Sop, userId: string, workspaceId: string, context: Partial<{ industry: string; department: string; description: string; audience: string; detailLevel: string; createdAt: string }> = {}): SopInsert {
-  const analytics=analyzeSop(sop);return { user_id: userId, workspace_id: workspaceId, title: sop.title, industry: context.industry ?? null, department: context.department ?? null, description: context.description ?? null, audience: context.audience ?? null, detail_level: context.detailLevel ?? null, content: asJson(sop), readiness_score: sop.documentReadinessScore, input_quality_score: sop.inputReadinessScore, source_notes: asJson(sop.knowledgeSources.sourceNotes), knowledge_source_names: sop.knowledgeSources.documentNames, analytics:asJson(analytics),quality_score:analytics.overallQuality,risk_level:analytics.riskLevel,analyzed_at:analytics.analyzedAt, created_at: context.createdAt };
+  const analytics=analyzeSop(sop),compliance=analyzeCompliance(sop);return { user_id: userId, workspace_id: workspaceId, title: sop.title, industry: context.industry ?? null, department: context.department ?? null, description: context.description ?? null, audience: context.audience ?? null, detail_level: context.detailLevel ?? null, content: asJson(sop), readiness_score: sop.documentReadinessScore, input_quality_score: sop.inputReadinessScore, source_notes: asJson(sop.knowledgeSources.sourceNotes), knowledge_source_names: sop.knowledgeSources.documentNames, analytics:asJson(analytics),quality_score:analytics.overallQuality,risk_level:analytics.riskLevel,analyzed_at:analytics.analyzedAt,compliance_score:compliance.complianceScore,audit_status:compliance.auditStatus,findings:asJson(compliance.findings), created_at: context.createdAt };
 }
 
 export function rowToSop(row: SopRow): Sop | null {
