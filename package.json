@@ -6,10 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:agent": "node scripts/verify-agent-x402.mjs",
+    "verify:x402": "node scripts/verify-agent-x402.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@okxweb3/x402-core": "^0.1.0",
+    "@okxweb3/x402-evm": "^0.2.1",
+    "@okxweb3/x402-next": "^0.1.1",
     "@supabase/ssr": "^0.12.3",
     "@supabase/supabase-js": "^2.110.8",
     "class-variance-authority": "^0.7.1",

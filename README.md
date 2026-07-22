@@ -108,6 +108,12 @@ Analytics recalculate when an SOP is generated, edited, restored, opened after a
 
 Current limitations: keyword rules cannot determine whether a cited control is legally sufficient, do not replace compliance review, and may miss domain-specific terminology. Analytics are decision support, not certification or legal advice.
 
+## OKX x402 paid agent
+
+ProcessForge exposes free metadata at `GET /api/agent`, dependency readiness at `GET /api/agent/health`, and paid SOP generation at `POST /api/agent/generate-sop`. Valid unpaid requests receive an x402 v2 `402 Payment Required`. Missing or disabled seller configuration selects the deterministic mock 402→200 flow; complete enabled seller configuration verifies and settles through the official OKX facilitator before OpenAI is called. The result contains the SOP plus deterministic analytics and compliance analysis.
+
+Apply [`supabase/migrations/202607220011_okx_x402_agent_service.sql`](supabase/migrations/202607220011_okx_x402_agent_service.sql), configure the `OKX_X402_*` variables shown in `.env.example`, and set the server-only `SUPABASE_SERVICE_ROLE_KEY`. X Layer test/development uses `eip155:1952`; production is hard-checked to `eip155:196`. See [`docs/paid-agent-x402.md`](docs/paid-agent-x402.md) for contracts, curl examples, paid retry behavior, idempotency, security assumptions, and deployment requirements.
+
 ## Compliance and Audit Center
 
 The Compliance Center evaluates process ownership, purpose, scope, responsibility separation, approvals, escalation, exception handling, KPIs, compliance notes, record retention, review cadence, controlled versions, and training validation. Scores are calculated locally and deterministically; no AI request is used for the assessment. Findings can prefill the existing AI Editor, but users must review and explicitly apply every proposed fix.
