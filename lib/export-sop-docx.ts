@@ -107,7 +107,7 @@ function body(text: string): Paragraph {
 }
 
 function bullets(items: string[]): Paragraph[] {
-  return items.map((item) => new Paragraph({ numbering: { reference: "sop-bullets", level: 0 }, children: [new TextRun(item)] }));
+  return (items.length ? items : ["None documented"]).map((item) => new Paragraph({ numbering: { reference: "sop-bullets", level: 0 }, children: [new TextRun(item)] }));
 }
 
 function metadataTable(sop: Sop): Table {

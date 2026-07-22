@@ -20,15 +20,14 @@ export function exportSopPdf(sop: Sop): void {
     const indent = options.indent ?? 0;
     const lines = linesFor(text, contentWidth - indent);
     const lineHeight = size * 0.42;
-    ensureSpace(lines.length * lineHeight + (options.after ?? 2));
     pdf.setFont("helvetica", options.bold ? "bold" : "normal");
     pdf.setFontSize(size);
     pdf.setTextColor(...(options.color ?? [41, 49, 61]));
-    pdf.text(lines, margin + indent, y);
-    y += lines.length * lineHeight + (options.after ?? 2);
+    lines.forEach((line) => { ensureSpace(lineHeight); pdf.text(line, margin + indent, y); y += lineHeight; });
+    y += options.after ?? 2;
   };
   const addHeading = (text: string) => { ensureSpace(14); y += 3; addText(text, { size: 14, color: [46, 116, 181], bold: true, after: 4 }); };
-  const addBullet = (text: string, marker = "•") => { const lines = linesFor(text, contentWidth - 8); const height = lines.length * 4.2 + 2; ensureSpace(height); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(41, 49, 61); pdf.text(marker, margin + 1, y); pdf.text(lines, margin + 7, y); y += height; };
+  const addBullet = (text: string, marker = "•") => { const lines = linesFor(text, contentWidth - 8); pdf.setFont("helvetica", "normal"); pdf.setFontSize(10); pdf.setTextColor(41, 49, 61); lines.forEach((line,index)=>{ensureSpace(4.2);if(index===0)pdf.text(marker,margin+1,y);pdf.text(line,margin+7,y);y+=4.2});y+=2; };
 
   pdf.setFont("helvetica", "bold");
   pdf.setFontSize(9);
@@ -55,7 +54,7 @@ export function exportSopPdf(sop: Sop): void {
   addHeading("2. Scope"); addText(sop.scope);
   addHeading("3. Roles and responsibilities");
   sop.roles.forEach((role) => { ensureSpace(12); addText(role.role, { bold: true, color: [31, 77, 120], after: 1 }); addText(role.responsibility, { indent: 3, after: 3 }); });
-  addHeading("4. Prerequisites"); sop.prerequisites.forEach((item) => addBullet(item));
+  addHeading("4. Prerequisites"); (sop.prerequisites.length ? sop.prerequisites : ["None documented"]).forEach((item) => addBullet(item));
   addHeading("5. Procedure");
   sop.procedureSteps.forEach((step) => {
     ensureSpace(20);
@@ -63,9 +62,10 @@ export function exportSopPdf(sop: Sop): void {
     addText(step.instruction, { indent: 4, after: 2 });
     addText(`Owner: ${step.owner}   |   Evidence: ${step.evidence}`, { size: 8.5, color: [80, 91, 108], indent: 4, after: 4 });
   });
-  addHeading("6. Escalation rules"); sop.escalationRules.forEach((item) => addBullet(item));
-  addHeading("7. Quality-control checklist"); sop.qualityChecklist.forEach((item) => addBullet(item, "[ ]"));
+  addHeading("6. Escalation rules"); (sop.escalationRules.length ? sop.escalationRules : ["None documented"]).forEach((item) => addBullet(item));
+  addHeading("7. Quality-control checklist"); (sop.qualityChecklist.length ? sop.qualityChecklist : ["None documented"]).forEach((item) => addBullet(item, "[ ]"));
   addHeading("8. Training quiz");
+  if (!sop.trainingQuiz.length) addText("No training questions documented.");
   sop.trainingQuiz.forEach((quiz, index) => {
     ensureSpace(18);
     addText(`${index + 1}. ${quiz.question}`, { bold: true, color: [31, 77, 120], after: 2 });

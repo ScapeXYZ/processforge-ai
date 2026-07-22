@@ -10,6 +10,6 @@ export async function GET(request: Request) {
     request_schema: { required: ["title", "description", "industry", "department", "audience"], optional: ["company_context", "requirements", "compliance_frameworks", "knowledge_context", "output_format"] },
     response_schema: { fields: ["request_id", "service", "status", "sop", "analytics", "compliance", "assumptions", "warnings", "generated_at", "processing_time_ms", "schema_version"] },
     pricing: { enabled: config.enabled, scheme: "exact", amount: config.price || null, asset: config.asset || null, network: config.network },
-    health_url: `${origin}/api/agent/health`, documentation_url: `${origin}/docs/paid-agent-x402`,
+    health_url: `${origin}/api/agent/health`, documentation_url: `${origin}/agent-docs`,
   }, { headers: { "cache-control": "public, max-age=60" } });
 }
