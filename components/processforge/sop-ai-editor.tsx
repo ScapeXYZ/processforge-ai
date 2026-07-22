@@ -33,6 +33,8 @@ export function SopAiEditor({ sop, onChange, disabled }: { sop: Sop; onChange: (
   const [redoStack, setRedoStack] = useState<Sop[]>([]);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  useEffect(() => { const receive=(event:Event)=>{const detail=(event as CustomEvent<unknown>).detail;if(typeof detail==="string"){setPrompt(detail);setMessage(null)}};window.addEventListener("processforge:editor-prompt",receive);return()=>window.removeEventListener("processforge:editor-prompt",receive); }, []);
+
   const applyEdit = async () => {
     if (!prompt.trim() || isEditing || disabled) return;
     setIsEditing(true);

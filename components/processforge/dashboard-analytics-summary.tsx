@@ -1,0 +1,9 @@
+"use client";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { AlertTriangle, BarChart3, BookOpen, CheckCircle2, ClipboardCheck } from "lucide-react";
+import { buttonVariants } from "@/components/ui/button";
+import { analyzeSop } from "@/lib/analytics/sop-analytics";
+import { fetchSops } from "@/lib/cloud/sop-service";
+
+export function DashboardAnalyticsSummary(){const[stats,setStats]=useState({average:0,high:0,review:0,approved:0,grounded:0});useEffect(()=>{void fetchSops().then(result=>{if(!result.ok)return;const analyzed=result.data.map(x=>analyzeSop(x.sop));setStats({average:analyzed.length?Math.round(analyzed.reduce((n,x)=>n+x.overallQuality,0)/analyzed.length):0,high:analyzed.filter(x=>x.riskLevel==="high"||x.riskLevel==="critical").length,review:analyzed.filter(x=>x.overallQuality<75||x.badges.includes("Needs Review")).length,approved:result.data.filter(x=>x.row.status==="approved").length,grounded:result.data.filter(x=>x.sop.knowledgeSources.documentNames.length>0).length})})},[]);const cards=[["Average SOP quality",`${stats.average}%`,BarChart3],["High-risk SOPs",stats.high,AlertTriangle],["Needs-review SOPs",stats.review,ClipboardCheck],["Approved SOPs",stats.approved,CheckCircle2],["Knowledge-grounded SOPs",stats.grounded,BookOpen]] as const;return <section className="mx-auto max-w-7xl px-4 pb-8 sm:px-6" aria-label="SOP analytics summary"><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-medium">Quality insights</h2><Link href="/analytics" className={buttonVariants({variant:"outline",size:"sm"})}>View analytics</Link></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">{cards.map(([label,value,Icon])=><div key={label} className="rounded-xl border border-border bg-card/40 p-4"><Icon className="size-4 text-emerald-400"/><p className="mt-3 text-2xl font-semibold">{value}</p><p className="text-xs text-muted-foreground">{label}</p></div>)}</div></section>}

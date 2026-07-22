@@ -10,6 +10,8 @@ import { emptyKnowledgeSources, type Sop } from "@/lib/sop-schema";
 import type { SopFormValues } from "./sop-form";
 import { calculateReadinessScore } from "@/lib/readiness-score";
 import { SopAiEditor } from "@/components/processforge/sop-ai-editor";
+import { SopAnalyticsCard } from "@/components/processforge/sop-analytics-card";
+import { saveSopAnalytics } from "@/lib/cloud/sop-service";
 
 export function generateMockSop(values: SopFormValues, revision = 1): Sop {
   const title = values.title.trim() || "Untitled process";
@@ -54,7 +56,7 @@ export function generateMockSop(values: SopFormValues, revision = 1): Sop {
 
 function sopToText(sop: Sop) { return [sop.title, `Document ID: ${sop.documentId} | Version: ${sop.version}`, "", "PURPOSE", sop.purpose, "", "SCOPE", sop.scope, "", "PROCEDURE", ...sop.procedureSteps.map((step) => `${step.stepNumber}. ${step.title}\nOwner: ${step.owner}\n${step.instruction}\nEvidence: ${step.evidence}`), "", "QUALITY CONTROL", ...sop.qualityChecklist.map((item) => `- ${item}`)].join("\n"); }
 
-export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, onSaveVersion, isLoading }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; onSopChange: (sop: Sop, changeSummary?: string) => void; onSaveVersion: () => boolean; isLoading: boolean }) {
+export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, onSaveVersion, isLoading, cloudSopId }: { sop: Sop | null; source: "ai" | "fallback" | null; onRegenerate: () => void; onClear: () => void; onSopChange: (sop: Sop, changeSummary?: string) => void; onSaveVersion: () => boolean; isLoading: boolean; cloudSopId?: string }) {
   const [exporting, setExporting] = useState<"PDF" | "DOCX" | "JSON" | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [versionMessage, setVersionMessage] = useState<string | null>(null);
@@ -107,6 +109,7 @@ export function SopPreview({ sop, source, onRegenerate, onClear, onSopChange, on
         <Button variant="outline" size="sm" onClick={() => runExport("DOCX")} disabled={!sop || Boolean(exporting)}><Download /> DOCX</Button>
         <Button variant="outline" size="sm" onClick={() => runExport("JSON")} disabled={!sop || Boolean(exporting)}><FileJson /> JSON</Button>
       </div>
+      {sop && <SopAnalyticsCard sop={sop} onSave={cloudSopId ? async (analytics) => (await saveSopAnalytics(cloudSopId, analytics)).ok : undefined} />}
       {sop && <SopAiEditor key={sop.documentId} sop={sop} onChange={onSopChange} disabled={isLoading} />}
     </section>
   );

@@ -97,3 +97,13 @@ Create a Resend account, add a sending domain, publish its SPF and DKIM DNS reco
 Invitation tokens are 256-bit random values. Only their SHA-256 hashes are stored. Links expire after seven days and become unusable after acceptance or revocation. Owners and admins can inspect delivery state, resend after the cooldown, or revoke. Registered recipients sign in; unregistered recipients sign up and return to the acceptance URL after email verification.
 
 Test delivery by inviting a second account, opening the email while logged out, signing in with the invited email, and accepting. Repeat with an unregistered email, complete signup and verification, and accept. Also test the wrong account, expiry, revocation, resend throttling, delivery failure, and duplicate-pending prevention.
+
+## SOP analytics and quality insights
+
+ProcessForge calculates SOP analytics locally without an AI request. Overall Quality is a weighted combination of completeness (20%), clarity (15%), procedure strength (20%), control strength (18%), compliance readiness (10%), training readiness (10%), and knowledge grounding (7%). Structured SOP fields are evaluated first; concepts that do not yet have dedicated schema fields—such as KPIs, exceptions, compliance guidance, and record retention—are detected using deterministic text rules.
+
+Risk findings use five severities: Critical means the record cannot be safely evaluated; High identifies missing accountability, triggers, approvals, escalation, measurable outcomes, or unsupported company-specific assumptions; Medium identifies operational gaps such as exceptions, KPIs, retention, checklists, training validation, vague steps, or a short procedure; Low identifies non-blocking governance gaps; Improvement highlights optional strengthening such as knowledge grounding. Rules and scores are deterministic and produce the same result for unchanged SOP content.
+
+Analytics recalculate when an SOP is generated, edited, restored, opened after a knowledge-source change, or manually reanalyzed. Generation and cloud synchronization continue even if analytics metadata cannot be saved. Apply [`supabase/migrations/202607220007_sop_analytics.sql`](supabase/migrations/202607220007_sop_analytics.sql) after the earlier cloud and collaboration migrations to add `analytics`, `quality_score`, `risk_level`, and `analyzed_at` while preserving existing SOP rows.
+
+Current limitations: keyword rules cannot determine whether a cited control is legally sufficient, do not replace compliance review, and may miss domain-specific terminology. Analytics are decision support, not certification or legal advice.
