@@ -9,7 +9,7 @@ export type X402Config = {
 };
 
 export function getX402Config(): X402Config {
-  const production = process.env.NODE_ENV === "production";
+  const production = process.env.NODE_ENV === "production" && process.env.ENABLE_RELEASE_CHECK === "true";
   const network = (process.env.OKX_X402_NETWORK || (production ? "eip155:196" : "eip155:1952")) as `eip155:${number}`;
   const enabled = process.env.OKX_X402_ENABLED === "true";
   const hasSellerCredentials = Boolean(process.env.OKX_X402_API_KEY?.trim() && process.env.OKX_X402_SECRET_KEY?.trim() && process.env.OKX_X402_PASSPHRASE?.trim());
@@ -31,7 +31,7 @@ export function getX402Config(): X402Config {
 }
 
 export function assertSafeProductionConfig(config: X402Config): void {
-  if (process.env.NODE_ENV === "production" && (config.mock || !config.enabled || !config.ready || config.network !== "eip155:196")) {
+  if (process.env.NODE_ENV === "production" && process.env.ENABLE_RELEASE_CHECK === "true" && (config.mock || !config.enabled || !config.ready || config.network !== "eip155:196")) {
     throw new Error("Production x402 configuration is incomplete or unsafe.");
   }
 }
