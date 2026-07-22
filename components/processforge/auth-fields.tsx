@@ -1,6 +1,6 @@
 "use client";
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -17,10 +17,7 @@ export function LoginForm() {
 }
 
 export function SignupForm() {
-  const params = useSearchParams();
-  useEffect(() => { const returnTo = safeReturnUrl(params.get("returnTo")); if (returnTo.startsWith("/invitations/accept")) document.cookie = `processforge_invitation_return=${encodeURIComponent(returnTo)}; Path=/; Max-Age=604800; SameSite=Lax`; }, [params]);
   const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const [error, setError] = useState("");
-  useEffect(() => { const returnTo = safeReturnUrl(params.get("returnTo")); if (message.startsWith("Account created") && returnTo.startsWith("/invitations/accept")) window.location.assign(returnTo); }, [message, params]);
   async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(""); const form = new FormData(event.currentTarget); const password = String(form.get("password")); if (password.length < 8) { setError("Use at least 8 characters for your password."); setBusy(false); return; } try { const origin = window.location.origin; const { data, error: authError } = await createClient().auth.signUp({ email: String(form.get("email")).trim(), password, options: { emailRedirectTo: `${origin}/auth/callback?next=/dashboard`, data: { display_name: String(form.get("displayName")).trim().slice(0, 80) } } }); if (authError) setError(messageFor(authError.message)); else setMessage(data.session ? "Account created. You can continue to your dashboard." : "Check your email to verify your account, then sign in."); } catch { setError("Authentication is not configured. Check the Supabase environment variables."); } finally { setBusy(false); } }
   return <form onSubmit={submit}><label className="text-sm text-slate-300">Display name<input className={inputClass} name="displayName" maxLength={80} required autoComplete="name" /></label><label className="mt-4 block text-sm text-slate-300">Email<input className={inputClass} name="email" type="email" required autoComplete="email" /></label><label className="mt-4 block text-sm text-slate-300">Password<input className={inputClass} name="password" type="password" minLength={8} required autoComplete="new-password" /></label>{message && <p role="status" className="mt-4 rounded-lg bg-emerald-400/10 p-3 text-sm text-emerald-200">{message}</p>}{error && <p role="alert" className="mt-4 text-sm text-rose-300">{error}</p>}<button className={buttonClass} disabled={busy}>{busy ? "Creating account…" : "Create Account"}</button></form>;
 }

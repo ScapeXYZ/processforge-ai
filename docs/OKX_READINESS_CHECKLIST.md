@@ -29,3 +29,5 @@ Do not mark an item complete without captured evidence.
 | No unsupported `vercel.app` submission URL | Not complete | Use approved custom/supported host. |
 
 Never describe the development token flow as a real payment. Production evidence must come from official facilitator verification and settlement.
+
+Workspace email invitations are not included in the current release and are unrelated to OKX readiness.

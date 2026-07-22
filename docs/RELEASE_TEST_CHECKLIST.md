@@ -19,7 +19,11 @@ Record `Pass`, `Fail`, or `Blocked` and link a screenshot, video, console captur
 | History/versions | Local and cloud records | Search, reopen, export, rename, compare, restore, delete | Correct snapshot/relationships; newest first; destructive confirmations | ___ | ___ |
 | SOP exports | Long/Unicode/sparse SOP | Export PDF, DOCX, JSON | Safe filename; valid files; page breaks; no cut text or private metadata | ___ | ___ |
 | Audit exports | Many long findings | Export compliance PDF/DOCX | Multipage, numbered/readable findings and review date | ___ | ___ |
-| Workspaces | Owner/admin/editor/viewer accounts | Exercise SOP/comment/review/member operations | Owner/admin manage; editor edits; viewer read-only; RLS rejects escalation | ___ | ___ |
+| Workspace creation | Authenticated account | Create a workspace and refresh | Workspace persists; creator is shown as owner; personal workspace remains intact | ___ | ___ |
+| Workspace switching | Two owned workspaces with different SOPs | Switch repeatedly and open workspace-aware views | Active selection persists; SOP organization stays scoped correctly | ___ | ___ |
+| Workspace ownership | Personal and non-personal owned workspace | Inspect badge; rename both; delete only non-personal workspace | Owner badge accurate; rename authorized; personal deletion unavailable | ___ | ___ |
+| Workspace data isolation | Two unrelated accounts | Attempt direct reads/updates/deletes of the other account’s workspace and SOP IDs | RLS rejects every unauthorized operation | ___ | ___ |
+| Invitation removal | Authenticated and signed-out sessions | Inspect header/dashboard/workspace/auth pages; request old UI and API URLs | No controls or notifications; page is 404; APIs return structured 410 without data | ___ | ___ |
 | Marketplace browse | Approved public templates | Search/filter/sort/open detail/profile | Public content only; no source SOP ID/private workspace data | ___ | ___ |
 | Marketplace publish | Creator SOP with and without sensitive text | Publish, resolve warnings, confirm, manage state | Sensitive content blocks; explicit confirmation; only creator can mutate | ___ | ___ |
 | Marketplace copy/rate/favorite | Non-creator authenticated account | Copy to selected workspace, rate twice, toggle favorite | Independent SOP with attribution; rating updates, no duplicate row; favorite toggles | ___ | ___ |
@@ -34,4 +38,4 @@ Record `Pass`, `Fail`, or `Blocked` and link a screenshot, video, console captur
 | Security | Staging and browser developer tools | Inspect bundles/responses/logs; submit oversized/malformed/HTML/prompt-injection inputs | No secrets/XSS/private objects; bounded validation; safe errors/logs | ___ | ___ |
 | Production environment | Production-like deployment | Run build, smoke harness, inspect URLs/env/cookies | HTTPS custom host, correct redirects/origins, mock disabled for live settlement | ___ | ___ |
 
-Invitation email delivery is intentionally excluded from this release scope and is not an acceptance blocker or advertised capability.
+Workspace email invitations are not included in the current release. Historical database objects are inactive and are not acceptance blockers.

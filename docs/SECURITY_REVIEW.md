@@ -24,7 +24,8 @@ No confirmed critical defect was found in the reviewed code. Production release 
 ### Low / informational
 
 - `NEXT_PUBLIC_SUPABASE_URL`, anon key, application/site URLs are intentionally public. Service role, OpenAI, Resend, and OKX credentials are server-only.
-- React escaping is used; no `dangerouslySetInnerHTML`, `eval`, or `new Function` application use was found. Invitation email HTML uses explicit escaping but is out of release scope.
+- React escaping is used; no `dangerouslySetInnerHTML`, `eval`, or `new Function` application use was found.
+- Workspace invitation APIs are retired data-free HTTP 410 tombstones. Historical invitation tables/RPCs remain protected legacy objects, are not called by active code, and have application-role privileges revoked by `202607220012_retire_workspace_invitations.sql`.
 - AI routes require authenticated sessions, validate Zod payloads, set provider timeouts, and return sanitized errors. Provider logs contain names/status/codes/durations, not prompts or secrets.
 - Knowledge prompts delimit reference text as untrusted and explicitly prevent document instructions from overriding application instructions.
 - Agent bodies are capped at 32 KiB; payment payloads are matched to resource/network/asset/amount/recipient; raw proofs are not stored.

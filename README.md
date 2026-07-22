@@ -76,27 +76,15 @@ SOP records, versions, profiles, and knowledge-document metadata synchronize thr
 
 This phase is local-first rather than a full offline synchronization engine. Conflict detection is record-level, queued background sync is not included, and knowledge text is not uploaded. Future work can add encrypted object storage, organization access controls, durable extraction jobs, OCR, audit logs, retention policies, and vector search.
 
-## Team collaboration
+## Workspaces
 
-Authenticated users receive a personal workspace automatically. Owners can create additional workspaces, invite teammates, rename or delete team workspaces, and manage Owner/Admin/Editor/Viewer permissions. SOPs, versions, comments, activities, invitations, and workflow changes are protected by workspace-scoped Row Level Security.
+Authenticated users receive a personal workspace automatically and can create additional workspaces to organize SOPs. The workspace screen supports creation, switching, an owner badge, owner-authorized rename, and safe deletion of non-personal workspaces. SOPs, versions, comments, activities, and workflow changes remain protected by workspace-scoped Row Level Security.
 
-Run [`supabase/migrations/202607220001_team_collaboration.sql`](supabase/migrations/202607220001_team_collaboration.sql) after the Phase 10 migration. It backfills existing SOPs into each owner’s personal workspace and adds the `draft`, `in_review`, `approved`, and `archived` workflow.
+Run [`supabase/migrations/202607220001_team_collaboration.sql`](supabase/migrations/202607220001_team_collaboration.sql) after the Phase 10 migration. It backfills existing SOPs into personal workspaces and adds the `draft`, `in_review`, `approved`, and `archived` workflow.
 
-Workspace invitations are delivered through the official `resend` SDK from a server-only Next.js Route Handler. The API key is never included in client bundles. Apply [`supabase/migrations/202607220004_secure_invitation_email_delivery.sql`](supabase/migrations/202607220004_secure_invitation_email_delivery.sql) after the earlier collaboration migrations.
+Workspace email invitations are not included in the current release. Historical invitation tables, RPCs, policies, records, and migrations are retained as inactive legacy database objects for compatibility and audit history. Active application code does not query or mutate them. Legacy invitation API URLs return HTTP 410 without exposing private data.
 
-Configure these values in `.env.local`:
-
-```env
-RESEND_API_KEY=re_...
-PROCESSFORGE_FROM_EMAIL=ProcessForge AI <invites@your-verified-domain.com>
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-```
-
-Create a Resend account, add a sending domain, publish its SPF and DKIM DNS records, wait for the domain to show **Verified**, and create a sending API key. Production sender addresses must use that verified domain. Resend development/testing senders may be restricted to the account owner’s address; use a verified domain to test arbitrary recipients. Set `NEXT_PUBLIC_APP_URL` to the exact HTTPS production origin when deployed.
-
-Invitation tokens are 256-bit random values. Only their SHA-256 hashes are stored. Links expire after seven days and become unusable after acceptance or revocation. Owners and admins can inspect delivery state, resend after the cooldown, or revoke. Registered recipients sign in; unregistered recipients sign up and return to the acceptance URL after email verification.
-
-Test delivery by inviting a second account, opening the email while logged out, signing in with the invited email, and accepting. Repeat with an unregistered email, complete signup and verification, and accept. Also test the wrong account, expiry, revocation, resend throttling, delivery failure, and duplicate-pending prevention.
+Apply [`supabase/migrations/202607220012_retire_workspace_invitations.sql`](supabase/migrations/202607220012_retire_workspace_invitations.sql) to revoke all invitation table and RPC privileges from public, anonymous, and authenticated application roles while preserving historical data.
 
 ## SOP analytics and quality insights
 

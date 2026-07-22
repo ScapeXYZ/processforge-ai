@@ -27,4 +27,4 @@
 - Consolidate legacy local/cloud history modes after migration adoption is measured.
 - Add observability dashboards and performance budgets.
 
-Workspace invitation email delivery is intentionally excluded from the current release scope. It is not advertised and is not a release blocker.
+Workspace email invitations are not included in the current release. Historical invitation database objects remain inactive and are not a release blocker.

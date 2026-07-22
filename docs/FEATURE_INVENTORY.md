@@ -13,14 +13,14 @@ Reviewed: 2026-07-22. Status means code-path readiness, not production acceptanc
 | Knowledge Base | `/knowledge-base`, `/api/knowledge-base/process` | Protected | TXT/PDF/DOCX validation/extraction, local text storage, cloud metadata and grounding exist; OCR is not supported. |
 | History / versions | `/history`, `/versions` | Protected | Local and cloud history, reopen, restore, rename, delete, compare and analytics comparison exist. |
 | Exports | SOP preview and compliance center | Protected UI | SOP PDF/DOCX/JSON and audit PDF/DOCX exist. Browser download behavior requires manual QA. |
-| Workspaces | `/workspaces` | Protected | Workspace/member roles, comments, activity and review workflow exist. Invitation email delivery is explicitly out of release scope and must not be advertised. |
+| Workspaces | `/workspaces` | Protected | Creation, switching, owner badge, owner-authorized rename/delete, SOP organization, comments/activity and review workflow exist. No invitation or member-management UI is active. |
 | Marketplace | `/marketplace`, `/marketplace/[slug]`, `/creators/[id]`, `/templates`, `/api/templates/publish` | Public browse/detail/profile; protected creator actions | Search/filter/detail/publish/sanitize/copy/rate/favorite/manage exist. Live RLS and migration verification required. |
 | Agent service | `/api/agent`, `/api/agent/health`, `/api/agent/generate-sop`, `/agent-docs` | Public machine endpoints | Metadata/health and mock 402→200 pass locally. Official production settlement remains unverified. |
 | Internal release QA | `/release-check` | Development only; production requires `ENABLE_RELEASE_CHECK=true` | Browser-local pass/fail/blocked evidence tracker. |
 
 ## Unfinished, limited, duplicated, or misleading areas
 
-- Invitation email delivery code and UI remain in the repository from earlier phases, but the feature is excluded from this release and must not appear in release marketing or acceptance criteria.
+- Workspace email invitations are not included in the current release. UI, hooks, polling, email integration, acceptance page, and active service calls were removed. Legacy API routes return structured HTTP 410.
 - `/history` and `/versions` support both legacy local storage and authenticated cloud data. This is intentional compatibility, but it creates two modes that require separate tests.
 - Phase 14 has an original marketplace migration plus an idempotent repair migration. Both are retained; the repair migration is authoritative for partially created schemas.
 - Agent verification has `verify:agent` and `verify:x402` aliases pointing to the same focused script. `verify:release` is the broader release harness.
@@ -30,9 +30,9 @@ Reviewed: 2026-07-22. Status means code-path readiness, not production acceptanc
 
 ## Database audit
 
-Tables used: `profiles`, `sops`, `sop_versions`, `knowledge_documents`, `workspaces`, `workspace_members`, `workspace_invitations`, `sop_comments`, `sop_activity`, `template_categories`, `marketplace_creator_profiles`, `sop_templates`, `template_tags`, `template_ratings`, `template_favorites`, `template_usage`, `agent_requests`, `agent_payments`, and `agent_usage`.
+Active tables used: `profiles`, `sops`, `sop_versions`, `knowledge_documents`, `workspaces`, `workspace_members`, `sop_comments`, `sop_activity`, `template_categories`, `marketplace_creator_profiles`, `sop_templates`, `template_tags`, `template_ratings`, `template_favorites`, `template_usage`, `agent_requests`, `agent_payments`, and `agent_usage`. `workspace_invitations` is retained only as an inactive legacy table.
 
-RPC/functions used or depended upon: `set_updated_at`, `handle_new_user`, `workspace_role_for`, `is_workspace_member`, `can_edit_workspace`, `can_manage_workspace`, `shares_workspace_with`, `create_workspace`, workspace invitation RPCs (out of release scope), `is_public_template`, marketplace aggregate refresh functions, and trigger helpers.
+Active RPC/functions used or depended upon: `set_updated_at`, `handle_new_user`, `workspace_role_for`, `is_workspace_member`, `can_edit_workspace`, `can_manage_workspace`, `shares_workspace_with`, `create_workspace`, `is_public_template`, marketplace aggregate refresh functions, and trigger helpers. Invitation RPCs remain inactive legacy objects and are not called by the application.
 
 View: `public_marketplace_templates`. It is the anonymous marketplace boundary and must expose only approved, published public template data.
 
@@ -40,4 +40,4 @@ Triggers: profile/SOP/document/workspace/comment timestamps, profile and persona
 
 RLS expectations: authenticated users access only their profile, workspace-authorized SOP/version/comment/activity rows, and their knowledge metadata; marketplace creators manage only their templates; anonymous access is limited to approved public marketplace records/categories/creator display data and permitted usage inserts; agent payment tables are service-role only.
 
-No new repair migration was created during Phase 16 because the active application objects are represented by the existing migration chain. Database state must still be checked by applying migrations to a clean staging project and inspecting policies in Supabase.
+Phase 17 adds `202607220012_retire_workspace_invitations.sql`. It preserves legacy invitation objects and records while revoking their table/RPC access from public, anonymous, and authenticated application roles. Database state must still be checked by applying migrations to a clean staging project and inspecting policies in Supabase.

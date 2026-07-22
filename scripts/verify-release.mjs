@@ -11,6 +11,9 @@ const request = async (path, init) => { const response = await fetch(`${baseUrl}
 const home = await request("/"); assert(home.response.status === 200, "Application responds", `HTTP ${home.response.status}`);
 const metadata = await request("/api/agent"); assert(metadata.response.status === 200, "Agent metadata", `HTTP ${metadata.response.status}`);
 const health = await request("/api/agent/health"); assert(health.response.status === 200, "Agent health", `HTTP ${health.response.status}`);
+const retiredInvitations = await request("/api/invitations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredInvitations.response.status === 410 && retiredInvitations.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation API", `HTTP ${retiredInvitations.response.status}`);
+const retiredAcceptance = await request("/api/invitations/accept", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredAcceptance.response.status === 410 && retiredAcceptance.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation acceptance API", `HTTP ${retiredAcceptance.response.status}`);
+const removedAcceptancePage = await request("/invitations/accept"); assert(removedAcceptancePage.response.status === 404, "Removed invitation acceptance page", `HTTP ${removedAcceptancePage.response.status}`);
 const getPaid = await request("/api/agent/generate-sop"); assert(getPaid.response.status === 405, "Paid endpoint method", `HTTP ${getPaid.response.status}`);
 const baseHeaders = { "content-type": "application/json", "idempotency-key": `release-${Date.now()}` };
 const invalid = await request("/api/agent/generate-sop", { method: "POST", headers: baseHeaders, body: "{}" }); assert(invalid.response.status === 400, "Invalid paid request", `HTTP ${invalid.response.status}`);
@@ -40,7 +43,7 @@ for (const [path, access] of routeExpectations) { const route = await request(pa
 const envExample = readFileSync(resolve(".env.example"), "utf8");
 const documentedEnv = ["OPENAI_API_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "SUPABASE_SERVICE_ROLE_KEY", "NEXT_PUBLIC_APP_URL", "NEXT_PUBLIC_SITE_URL", "MARKETPLACE_AUTO_APPROVE", "OKX_X402_ENABLED", "OKX_X402_NETWORK", "OKX_X402_PAY_TO_ADDRESS", "OKX_X402_ASSET", "OKX_X402_PRICE", "OKX_X402_FACILITATOR_URL", "OKX_X402_API_KEY", "OKX_X402_SECRET_KEY", "OKX_X402_PASSPHRASE", "OKX_X402_TIMEOUT_SECONDS", "ENABLE_RELEASE_CHECK"];
 assert(documentedEnv.every(name => new RegExp(`^${name}=`, "m").test(envExample)), "Environment documentation", `${documentedEnv.length} variables present`);
-const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql"];
+const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql"];
 assert(migrations.every(file => existsSync(resolve("supabase/migrations", file))), "Required migrations", `${migrations.length} files present`);
 assert(existsSync(resolve(".next/BUILD_ID")) || existsSync(resolve(".next/build-manifest.json")), "Production build artifact", "run npm run build before release verification");
 

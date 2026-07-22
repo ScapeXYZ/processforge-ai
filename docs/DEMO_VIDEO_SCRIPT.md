@@ -6,6 +6,8 @@
 
 Show the landing page and move into the authenticated workspace.
 
+Create a fictional “Finance Operations” workspace, point out the workspace owner badge, organize the demo SOP there, and switch between two owned workspaces. Do not make team, collaborator, member-management, or invitation claims. Workspace email invitations are not included in the current release.
+
 ## 0:25–1:20 — Generate an SOP
 
 Use the fictional “Supplier invoice approval” brief. Point out live input readiness and local smart suggestions. Select a fictional knowledge source, generate, and show sequential progress. Explain Input Quality versus SOP Readiness, assumptions, source notes, owners, evidence, checklist, and training quiz.
@@ -16,7 +18,7 @@ Open SOP Analytics. Highlight deterministic quality breakdown and top risks. Ope
 
 ## 2:05–2:35 — Export and reuse
 
-Export PDF and briefly show the multipage layout; mention DOCX and JSON. Open the public marketplace, search for a fictional template, preview it, and explain that copying creates an independent workspace SOP with attribution. Do not show or advertise team invitations.
+Export PDF and briefly show the multipage layout; mention DOCX and JSON. Open the public marketplace, search for a fictional template, preview it, and explain that copying creates an independent workspace SOP with attribution.
 
 ## 2:35–3:40 — Machine agent and x402
 
