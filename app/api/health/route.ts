@@ -1,4 +1,4 @@
-import { AGENT_VERSION } from "@/lib/agent/config";
+import { AGENT_VERSION } from "@/lib/agent/service";
 import { inspectServerEnvironment } from "@/lib/env/server";
 
 export const runtime = "nodejs";

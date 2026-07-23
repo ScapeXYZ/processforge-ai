@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 const baseUrl = process.env.RELEASE_TEST_BASE_URL || process.env.AGENT_TEST_BASE_URL || "http://localhost:3000";
 const configuredTimeout = Number(process.env.VERIFY_TIMEOUT_MS ?? 60_000);
 const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 60_000;
-const expectedNetwork = "eip155:1952";
 const results = [];
 const pass = (name, detail = "") => results.push({ name, status: "pass", detail });
 const assert = (condition, name, detail) => { if (!condition) throw new Error(`${name}: ${detail}`); pass(name, detail); };
@@ -16,6 +15,8 @@ const home = await request("/"); assert(home.response.status === 200, "Applicati
 for (const header of ["content-security-policy", "x-content-type-options", "referrer-policy", "permissions-policy", "x-frame-options"]) assert(Boolean(home.response.headers.get(header)), `Security header ${header}`, "present");
 const metadata = await request("/api/agent"); assert(metadata.response.status === 200, "Agent metadata", `HTTP ${metadata.response.status}`);
 const health = await request("/api/agent/health"); assert(health.response.status === 200, "Agent health", `HTTP ${health.response.status}`);
+assert(typeof metadata.body?.pricing?.enabled === "boolean", "Agent pricing state", String(metadata.body?.pricing?.enabled));
+assert(["ready", "disabled"].includes(health.body?.payment_configuration?.status), "Agent payment status", String(health.body?.payment_configuration?.status));
 const appHealth = await request("/api/health"); assert(appHealth.response.status === 200, "Application health", `HTTP ${appHealth.response.status}`);
 const retiredInvitations = await request("/api/invitations", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredInvitations.response.status === 410 && retiredInvitations.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation API", `HTTP ${retiredInvitations.response.status}`);
 const retiredAcceptance = await request("/api/invitations/accept", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" }); assert(retiredAcceptance.response.status === 410 && retiredAcceptance.body?.error?.code === "INVITATIONS_NOT_AVAILABLE", "Retired invitation acceptance API", `HTTP ${retiredAcceptance.response.status}`);
@@ -24,15 +25,14 @@ const getPaid = await request("/api/agent/generate-sop"); assert(getPaid.respons
 const baseHeaders = { "content-type": "application/json", "idempotency-key": `release-${Date.now()}` };
 const invalid = await request("/api/agent/generate-sop", { method: "POST", headers: baseHeaders, body: "{}" }); assert(invalid.response.status === 400, "Invalid paid request", `HTTP ${invalid.response.status}`);
 const payload = { title: "Supplier invoice approval", description: "When a supplier invoice arrives, Accounting validates it, records approval evidence within two business days, escalates exceptions, and schedules payment.", industry: "Finance", department: "Accounting", audience: "Accounts payable team", requirements: ["Define approval and exception evidence"], output_format: "json" };
-const key = `${baseHeaders["idempotency-key"]}-mock`;
-const unpaid = await request("/api/agent/generate-sop", { method: "POST", headers: { ...baseHeaders, "idempotency-key": key }, body: JSON.stringify(payload) });
-assert(unpaid.response.status === 402, "Unpaid x402 response", `HTTP ${unpaid.response.status}`);
-const network = unpaid.body?.x402?.accepts?.[0]?.network; assert(network === expectedNetwork, "Development network", String(network));
-assert(Boolean(unpaid.response.headers.get("payment-required")), "Payment requirement header", "present");
-const token = unpaid.response.headers.get("x-mock-payment-token") || unpaid.body?.mock_payment?.token;
-assert(Boolean(token), "Mock payment challenge", "present");
-const paid = await request("/api/agent/generate-sop", { method: "POST", headers: { ...baseHeaders, "idempotency-key": key, "payment-signature": token }, body: JSON.stringify(payload) });
-assert(paid.response.status === 200 && paid.body?.status === "completed" && paid.body?.sop && paid.body?.analytics && paid.body?.compliance, "Mock paid retry", `HTTP ${paid.response.status}`);
+const unpaid = await request("/api/agent/generate-sop", { method: "POST", headers: { ...baseHeaders, "idempotency-key": `${baseHeaders["idempotency-key"]}-unpaid` }, body: JSON.stringify(payload) });
+if (metadata.body?.pricing?.enabled) {
+  assert(unpaid.response.status === 402 && Boolean(unpaid.response.headers.get("payment-required")), "Official payment challenge", `HTTP ${unpaid.response.status}`);
+} else {
+  assert(unpaid.response.status === 503 && unpaid.body?.error?.code === "SERVICE_BUSY", "Disabled paid endpoint", `HTTP ${unpaid.response.status}`);
+  assert(!unpaid.response.headers.get("payment-required"), "No disabled payment challenge", "header absent");
+}
+assert(!unpaid.response.headers.get("x-mock-payment-token"), "No legacy mock challenge", "header absent");
 
 const serializedPublic = `${metadata.text}\n${health.text}`.toLowerCase();
 const forbiddenNames = ["openai_api_key", "supabase_service_role_key", "okx_x402_api_key", "okx_x402_secret_key", "okx_x402_passphrase", "authorization", "payment-signature"];
@@ -51,8 +51,9 @@ const documentedEnv = ["OPENAI_API_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NEXT_PUBLI
 assert(documentedEnv.every(name => new RegExp(`^${name}=`, "m").test(envExample)), "Environment documentation", `${documentedEnv.length} variables present`);
 assert(!/^NEXT_PUBLIC_(APP|SITE)_URL=/m.test(envExample), "Server-only application URL", "no public application URL variable");
 for (const file of ["docs/PRODUCTION_DEPLOYMENT.md", "docs/PRODUCTION_CHECKLIST.md", "docs/CUSTOM_DOMAIN_CHECKLIST.md", ".env.production.example", ".github/workflows/ci.yml", "scripts/verify-deployment.mjs", "app/privacy/page.tsx", "app/terms/page.tsx", "app/acceptable-use/page.tsx", "app/ai-disclaimer/page.tsx", "app/data-handling/page.tsx"]) assert(existsSync(resolve(file)), `Required production artifact ${file}`, "present");
-const x402ConfigSource = readFileSync(resolve("lib/agent/config.ts"), "utf8");
-assert(x402ConfigSource.includes("!production &&") && x402ConfigSource.includes('config.network !== "eip155:196"'), "Production x402 boundary", "mock excluded; mainnet enforced");
+const officialMiddlewareSource = readFileSync(resolve("lib/agent/official-x402-middleware.ts"), "utf8");
+assert(officialMiddlewareSource.includes("paymentProxy") && officialMiddlewareSource.includes("OKXFacilitatorClient"), "Official payment middleware", "OKX SDK wired");
+assert(existsSync(resolve("legacy/x402-custom/runtime/x402.ts")), "Legacy x402 isolation", "custom runtime moved");
 const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql", "202607230001_harden_x402_payment_replay.sql"];
 assert(migrations.every(file => existsSync(resolve("supabase/migrations", file))), "Required migrations", `${migrations.length} files present`);
 assert(existsSync(resolve(".next/BUILD_ID")) || existsSync(resolve(".next/build-manifest.json")), "Production build artifact", "run npm run build before release verification");

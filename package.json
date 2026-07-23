@@ -7,11 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "verify:agent": "node scripts/verify-agent-x402.mjs",
-    "verify:x402": "node scripts/verify-agent-x402.mjs",
-    "verify:x402:production": "node scripts/verify-agent-x402-production.mjs",
-    "verify:okx-auth": "node scripts/verify-okx-auth.mjs",
-    "test:x402:real": "node scripts/test-agent-x402-real-payment.mjs",
+    "verify:x402": "node scripts/verify-official-x402.mjs",
+    "verify:x402:production": "node scripts/verify-official-x402.mjs --production",
     "verify:release": "node scripts/verify-release.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "seed:demo": "node scripts/seed-demo-data.mjs"
