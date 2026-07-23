@@ -45,29 +45,29 @@ export async function POST(request: Request) {
   const effectiveId = existing ? String(existing.id) : requestId;
   try { assertSafeProductionConfig(config); } catch { return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment verification is temporarily unavailable.", 503, effectiveId); }
   const resourceUrl = `${getAppBaseUrl()}/api/agent/generate-sop`;
-  if (!existing) await createAgentRequest({ id: effectiveId, service: AGENT_SERVICE, idempotency_key: idempotencyKey, request_hash: hash, status: "payment_required", network: config.network, price: config.price, asset: config.asset });
+  if (!existing) await createAgentRequest({ id: effectiveId, service: AGENT_SERVICE, idempotency_key: idempotencyKey, request_hash: hash, status: "payment_required", network: config.network, price: config.price, asset: config.assetAddress });
   log("request_received", effectiveId, { duration_ms: Date.now() - startedAt });
   const paymentHeader = request.headers.get("payment-signature") || request.headers.get("x-payment");
   const expectedMockToken = config.mock ? mockPaymentToken(idempotencyKey, hash, resourceUrl) : undefined;
-  if (!paymentHeader) { log("payment_required", effectiveId); return paymentRequiredResponse(config, resourceUrl, effectiveId, expectedMockToken); }
+  if (!paymentHeader) { log("payment_required", effectiveId); return paymentRequiredResponse(config, resourceUrl, hash, effectiveId, expectedMockToken); }
   let settlementHeader: string | undefined;
   if (existing?.status !== "paid") {
     try {
       if (!config.mock && (!config.ready || !process.env.SUPABASE_SERVICE_ROLE_KEY)) throw new Error("PAYMENT_CONFIGURATION_ERROR");
-      const payload = config.mock ? null : decodePayment(paymentHeader); const requirements = paymentRequirements(config, resourceUrl);
+      const payload = config.mock ? null : decodePayment(paymentHeader); const requirements = paymentRequirements(config, resourceUrl, hash);
       if (config.mock && paymentHeader !== expectedMockToken) throw new Error("PAYMENT_INVALID");
-      if (payload) assertPaymentMatches(payload, requirements, resourceUrl);
+      if (payload) assertPaymentMatches(payload, requirements, resourceUrl, hash);
       const reference = payload ? paymentReference(payload) : stableHash(paymentHeader);
-      const reserved = await reservePayment({ request_id: effectiveId, payment_reference: reference, recipient_address: config.payTo, network: config.network, asset: config.asset, amount: config.price, verification_status: "pending", settlement_status: "pending" });
+      const reserved = await reservePayment({ request_id: effectiveId, payment_reference: reference, replay_fingerprint: reference, recipient_address: config.payTo, network: config.network, asset: config.assetAddress, amount: config.price, verification_status: "pending", settlement_status: "pending" });
       if (!reserved) { log("payment_rejected", effectiveId, { reason: "replay" }); return agentError("PAYMENT_REPLAYED", "This payment proof has already been used.", 409, effectiveId); }
       await updateAgentRequest(effectiveId, { status: "settling" });
       if (config.mock) {
         settlementHeader = Buffer.from(JSON.stringify({ success: true, status: "success", network: config.network, transaction: `mock-${reference.slice(0, 24)}` })).toString("base64");
-        await updatePayment(reference, { payer_address: "mock-payer", verification_status: "verified", settlement_status: "settled", verified_at: new Date().toISOString(), settled_at: new Date().toISOString(), transaction_hash: `mock-${reference}` });
+        await updatePayment(reference, { payer_address: "mock-payer", verification_status: "verified", settlement_status: "settled", settlement_reference: `mock-${reference}`, verified_at: new Date().toISOString(), settled_at: new Date().toISOString(), transaction_hash: `mock-${reference}` });
       } else if (payload) {
         const paid = await verifyAndSettle(config, payload, requirements);
         settlementHeader = paymentResponseHeader(paid.settlement);
-        await updatePayment(reference, { payer_address: paid.payer, verification_status: "verified", settlement_status: paid.settlement.status === "pending" ? "pending" : "settled", verified_at: new Date().toISOString(), settled_at: paid.settlement.status === "success" ? new Date().toISOString() : null, transaction_hash: paid.settlement.transaction });
+        await updatePayment(reference, { payer_address: paid.payer, verification_status: "verified", settlement_status: "settled", settlement_reference: paid.settlement.transaction, verified_at: new Date().toISOString(), settled_at: new Date().toISOString(), transaction_hash: paid.settlement.transaction });
       }
       await updateAgentRequest(effectiveId, { status: "paid" }); log("payment_verified", effectiveId, { provider: config.provider }); log("settlement_completed", effectiveId, { settlement_status: "success", provider: config.provider });
     } catch (error) {

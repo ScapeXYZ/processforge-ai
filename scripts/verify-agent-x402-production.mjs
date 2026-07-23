@@ -1,0 +1,47 @@
+import { decodePaymentRequiredHeader } from "@okxweb3/x402-core/http";
+
+const target = new URL(process.env.DEPLOYMENT_URL || "https://processforgeai.xyz");
+if (target.protocol !== "https:") throw new Error("Production verification requires HTTPS.");
+const base = target.origin;
+const request = async (path, init = {}) => { const response = await fetch(`${base}${path}`, { ...init, signal: AbortSignal.timeout(30_000) }); const text = await response.text(); let body; try { body = JSON.parse(text); } catch { body = text; } return { response, text, body }; };
+const assert = (ok, message) => { if (!ok) throw new Error(message); };
+const secretNames = ["okx_x402_api_key", "okx_x402_secret_key", "okx_x402_passphrase", "payment-signature", "private_key"];
+
+const metadata = await request("/api/agent"); assert(metadata.response.status === 200, `metadata returned ${metadata.response.status}`);
+const health = await request("/api/agent/health"); assert(health.response.status === 200, `health returned ${health.response.status}`);
+const paymentConfiguration = health.body?.payment_configuration;
+assert(paymentConfiguration?.status === "ready", `health payment_configuration.status: expected "ready", received ${JSON.stringify(paymentConfiguration?.status)}`);
+assert(paymentConfiguration?.provider === "okx", `health payment_configuration.provider: expected "okx", received ${JSON.stringify(paymentConfiguration?.provider)}`);
+assert(paymentConfiguration?.network === "eip155:196", `health payment_configuration.network: expected "eip155:196", received ${JSON.stringify(paymentConfiguration?.network)}`);
+const pricing = metadata.body?.pricing;
+assert(pricing?.enabled === true, `metadata pricing.enabled: expected true, received ${JSON.stringify(pricing?.enabled)}`);
+assert(pricing?.network === "eip155:196", `metadata pricing.network: expected "eip155:196", received ${JSON.stringify(pricing?.network)}`);
+assert(pricing?.asset === "USDT", `metadata pricing.asset: expected "USDT", received ${JSON.stringify(pricing?.asset)}`);
+assert(/^0x[a-fA-F0-9]{40}$/.test(pricing?.asset_address || ""), `metadata pricing.asset_address: expected an EVM contract address, received ${JSON.stringify(pricing?.asset_address)}`);
+assert(pricing?.asset_decimals === 6, `metadata pricing.asset_decimals: expected 6, received ${JSON.stringify(pricing?.asset_decimals)}`);
+assert(pricing?.amount === "10000" || pricing?.amount === 10000, `metadata pricing.amount: expected "10000" or 10000, received ${JSON.stringify(pricing?.amount)}`);
+const get = await request("/api/agent/generate-sop"); assert(get.response.status === 405, `GET returned ${get.response.status}`);
+const headers = { "content-type": "application/json", "idempotency-key": `prod-verify-${crypto.randomUUID()}` };
+const invalid = await request("/api/agent/generate-sop", { method: "POST", headers, body: "{}" }); assert(invalid.response.status === 400, `invalid POST returned ${invalid.response.status}`);
+const payload = { title: "Production verification", description: "Operations validates an incoming request, records evidence, and escalates exceptions.", industry: "Technology", department: "Operations", audience: "Operations team", output_format: "json" };
+const unpaid = await request("/api/agent/generate-sop", { method: "POST", headers: { ...headers, "idempotency-key": `${headers["idempotency-key"]}-unpaid` }, body: JSON.stringify(payload) });
+assert(unpaid.response.status === 402, `unpaid POST returned ${unpaid.response.status}: ${unpaid.text}`);
+const paymentRequiredHeader = unpaid.response.headers.get("payment-required");
+assert(Boolean(paymentRequiredHeader), "402 response is missing the PAYMENT-REQUIRED header");
+let decodedChallenge;
+try { decodedChallenge = decodePaymentRequiredHeader(paymentRequiredHeader); }
+catch (error) { throw new Error(`PAYMENT-REQUIRED header could not be decoded: ${error instanceof Error ? error.message : String(error)}`); }
+const requirement = decodedChallenge?.accepts?.[0];
+assert(requirement?.scheme === "exact", `402 scheme: expected "exact", received ${JSON.stringify(requirement?.scheme)}`);
+assert(requirement?.network === "eip155:196", `402 network: expected "eip155:196", received ${JSON.stringify(requirement?.network)}`);
+assert(/^0x[a-fA-F0-9]{40}$/.test(requirement?.asset || ""), `402 asset must be an ERC-20 contract address, received ${JSON.stringify(requirement?.asset)}`);
+assert(requirement.asset.toLowerCase() === pricing.asset_address.toLowerCase(), `402 asset contract mismatch: received contract ${JSON.stringify(requirement.asset)}, received symbol ${JSON.stringify(requirement?.extra?.assetSymbol)}, expected address ${JSON.stringify(pricing.asset_address)}`);
+assert(requirement?.extra?.assetSymbol === pricing?.asset, `402 asset symbol mismatch: received symbol ${JSON.stringify(requirement?.extra?.assetSymbol)}, metadata symbol ${JSON.stringify(pricing?.asset)}, contract ${JSON.stringify(requirement?.asset)}`);
+assert(requirement?.extra?.name === "USD₮0" && requirement?.extra?.version === "1", `402 token domain mismatch: expected name "USD₮0" and version "1", received name ${JSON.stringify(requirement?.extra?.name)} and version ${JSON.stringify(requirement?.extra?.version)}`);
+assert(requirement?.payTo && /^0x[a-fA-F0-9]{40}$/.test(requirement.payTo), "402 recipient is missing or invalid");
+assert(requirement.payTo.toLowerCase() === (process.env.OKX_X402_PAY_TO_ADDRESS || requirement.payTo).toLowerCase(), "402 recipient does not match OKX_X402_PAY_TO_ADDRESS");
+assert(String(requirement.amount) === String(pricing?.amount) && requirement.extra?.resource === `${base}/api/agent/generate-sop`, `402 amount/resource mismatch: received amount ${JSON.stringify(requirement?.amount)}, metadata amount ${JSON.stringify(pricing?.amount)}, resource ${JSON.stringify(requirement?.extra?.resource)}`);
+assert(Number.isInteger(requirement?.maxTimeoutSeconds) && requirement.maxTimeoutSeconds > 0, `402 maxTimeoutSeconds must be a positive integer, received ${JSON.stringify(requirement?.maxTimeoutSeconds)}`);
+const publicText = `${metadata.text}\n${health.text}\n${unpaid.text}`.toLowerCase(); assert(secretNames.every(name => !publicText.includes(name)), "a secret field name was exposed");
+for (const value of [process.env.OKX_X402_API_KEY, process.env.OKX_X402_SECRET_KEY, process.env.OKX_X402_PASSPHRASE].filter(Boolean)) assert(!publicText.includes(value.toLowerCase()), "a configured secret value was exposed");
+console.log(JSON.stringify({ status: "pass", deployment: base, network: requirement.network, asset: pricing.asset, asset_contract: requirement.asset, amount_atomic: requirement.amount, recipient: requirement.payTo, paid_request: "not attempted" }, null, 2));
