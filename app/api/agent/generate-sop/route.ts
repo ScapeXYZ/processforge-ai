@@ -49,17 +49,18 @@ export async function POST(request: Request) {
   log("request_received", effectiveId, { duration_ms: Date.now() - startedAt });
   const paymentHeader = request.headers.get("payment-signature") || request.headers.get("x-payment");
   const expectedMockToken = config.mock ? mockPaymentToken(hash, resourceUrl) : undefined;
-  if (!paymentHeader) { log("payment_required", effectiveId); return paymentRequiredResponse(config, resourceUrl, hash, effectiveId, expectedMockToken); }
+  if (!paymentHeader) { log("payment_required", effectiveId); return paymentRequiredResponse(config, resourceUrl, effectiveId, expectedMockToken); }
   let settlementHeader: string | undefined;
   if (existing?.status !== "paid") {
     let reservedReference: string | undefined;
     try {
       if (!config.mock && (!config.ready || !process.env.SUPABASE_SERVICE_ROLE_KEY)) throw new Error("PAYMENT_CONFIGURATION_ERROR");
-      const payload = config.mock ? null : decodePayment(paymentHeader); const requirements = paymentRequirements(config, resourceUrl, hash);
+      const payload = config.mock ? null : decodePayment(paymentHeader); const requirements = paymentRequirements(config);
       if (config.mock && paymentHeader !== expectedMockToken) throw new Error("PAYMENT_INVALID");
-      if (payload) assertPaymentMatches(payload, requirements, resourceUrl, hash);
+      if (payload) assertPaymentMatches(payload, requirements, resourceUrl);
       const reference = payload ? paymentReference(payload) : stableHash(paymentHeader);
-      const verified = payload ? await verifyPayment(config, payload, requirements) : null;
+      const facilitatorRequirements = payload?.accepted ?? requirements;
+      const verified = payload ? await verifyPayment(config, payload, facilitatorRequirements) : null;
       const reservation = await reserveVerifiedPayment({ request_id: effectiveId, payment_reference: reference, replay_fingerprint: reference, recipient_address: config.payTo, network: config.network, asset: config.assetAddress, amount: config.price, payer_address: verified?.payer ?? (config.mock ? "mock-payer" : null), verification_status: "verified", settlement_status: "pending", verified_at: new Date().toISOString() });
       if (reservation === "replay") { log("payment_rejected", effectiveId, { reason: "replay" }); return agentError("PAYMENT_REPLAYED", "This payment proof has already been used for another request or settlement.", 409, effectiveId); }
       reservedReference = reference;
@@ -68,7 +69,7 @@ export async function POST(request: Request) {
         settlementHeader = Buffer.from(JSON.stringify({ success: true, status: "success", network: config.network, transaction: `mock-${reference.slice(0, 24)}` })).toString("base64");
         await updatePayment(reference, { settlement_status: "settled", settlement_reference: `mock-${reference}`, settled_at: new Date().toISOString(), transaction_hash: `mock-${reference}` });
       } else if (payload) {
-        const settlement = await settlePayment(config, payload, requirements);
+        const settlement = await settlePayment(config, payload, facilitatorRequirements);
         settlementHeader = paymentResponseHeader(settlement);
         await updatePayment(reference, { payer_address: settlement.payer ?? verified?.payer ?? null, settlement_status: "settled", settlement_reference: settlement.transaction, settled_at: new Date().toISOString(), transaction_hash: settlement.transaction });
       }

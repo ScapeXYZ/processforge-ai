@@ -12,7 +12,6 @@ const idempotencyKey = `real-payment-${crypto.randomUUID()}`;
 const headers = { "content-type": "application/json", "idempotency-key": idempotencyKey };
 const unpaid = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
 if (unpaid.status !== 402) throw new Error(`Expected 402, received ${unpaid.status}`);
-const challengeBody = await unpaid.json();
 const encodedChallenge = unpaid.headers.get("payment-required");
 if (!encodedChallenge) throw new Error("Missing PAYMENT-REQUIRED header.");
 const paymentRequired = decodePaymentRequiredHeader(encodedChallenge);
@@ -29,17 +28,17 @@ const [chainId, tokenBalance, nativeBalance] = await Promise.all([
 ]);
 if (chainId !== 196) throw new Error(`RPC chain mismatch: expected 196, received ${chainId}.`);
 const requiredAmount = BigInt(requirement.amount);
-const tokenDecimals = Number(requirement.extra.assetDecimals);
-console.log(JSON.stringify({ mode: process.env.DIAGNOSE_REAL_X402_PAYMENT === "YES" ? "diagnosis" : "payment", buyer_address: account.address, network: requirement.network, asset_contract: requirement.asset, token_balance_atomic: tokenBalance.toString(), token_balance: formatUnits(tokenBalance, tokenDecimals), required_amount_atomic: requirement.amount, required_amount: formatUnits(requiredAmount, tokenDecimals), native_balance: formatEther(nativeBalance), native_gas_required_by_transfer_method: false, transfer_method: requirement.extra.assetTransferMethod ?? "eip3009", recipient: requirement.payTo, resource: paymentRequired.resource.url }, null, 2));
+const tokenDecimals = 6;
+console.log(JSON.stringify({ mode: process.env.DIAGNOSE_REAL_X402_PAYMENT === "YES" ? "diagnosis" : "payment", buyer_address: account.address, network: requirement.network, asset_symbol: "USDT", asset_contract: requirement.asset, token_balance_atomic: tokenBalance.toString(), token_balance: formatUnits(tokenBalance, tokenDecimals), required_amount_atomic: requirement.amount, required_amount: formatUnits(requiredAmount, tokenDecimals), native_balance: formatEther(nativeBalance), native_gas_required_by_transfer_method: false, transfer_method: requirement.extra.assetTransferMethod ?? "eip3009", recipient: requirement.payTo, resource: paymentRequired.resource.url }, null, 2));
 if (tokenBalance < requiredAmount) throw new Error("Buyer preflight failed: insufficient USDT0 balance.");
 if (process.env.DIAGNOSE_REAL_X402_PAYMENT === "YES") { console.log("Diagnosis complete: no signature was created and no paid retry was submitted."); process.exit(0); }
 
-console.log(`REAL PAYMENT: ${requirement.amount} atomic units of ${requirement.extra.assetSymbol} to ${requirement.payTo}`);
+console.log(`REAL PAYMENT: ${requirement.amount} atomic units of USDT to ${requirement.payTo}`);
 if (process.env.CONFIRM_REAL_X402_PAYMENT !== "YES") throw new Error("Refusing real payment. Review the amount above, then set CONFIRM_REAL_X402_PAYMENT=YES.");
 for (const name of ["OKX_X402_API_KEY", "OKX_X402_SECRET_KEY", "OKX_X402_PASSPHRASE"]) if (!process.env[name]) throw new Error(`Missing required official test credential: ${name}`);
 const core = new x402Client().register("eip155:196", new ExactEvmScheme(toClientEvmSigner(account)));
 const client = new x402HTTPClient(core);
-const officialChallenge = client.getPaymentRequiredResponse(name => unpaid.headers.get(name), challengeBody);
+const officialChallenge = client.getPaymentRequiredResponse(name => unpaid.headers.get(name));
 const paymentPayload = await client.createPaymentPayload(officialChallenge);
 validateCreatedPayload(paymentPayload, requirement, account.address, endpoint);
 const paid = await fetch(endpoint, { method: "POST", headers: { ...headers, ...client.encodePaymentSignatureHeader(paymentPayload) }, body: JSON.stringify(body) });
@@ -62,10 +61,10 @@ function validateChallenge(challenge, accepted, expectedResource) {
   if (accepted.amount !== "10000") throw new Error(`Expected amount 10000, received ${accepted.amount}.`);
   if (!/^0x[a-fA-F0-9]{40}$/.test(accepted.payTo)) throw new Error("Challenge recipient is not an EVM address.");
   if (process.env.OKX_X402_PAY_TO_ADDRESS && accepted.payTo.toLowerCase() !== process.env.OKX_X402_PAY_TO_ADDRESS.toLowerCase()) throw new Error("Challenge recipient does not match OKX_X402_PAY_TO_ADDRESS.");
-  if (accepted.extra?.name !== "USD₮0" || accepted.extra?.version !== "1" || accepted.extra?.assetSymbol !== "USDT" || accepted.extra?.assetDecimals !== 6) throw new Error("Challenge USDT0 token metadata is invalid.");
+  if (accepted.extra?.name !== "USD₮0" || accepted.extra?.version !== "1") throw new Error("Challenge USDT0 EIP-712 domain metadata is invalid.");
   if ((accepted.extra?.assetTransferMethod ?? "eip3009") !== "eip3009") throw new Error(`Unsupported transfer method ${accepted.extra?.assetTransferMethod}.`);
   if (!Number.isInteger(accepted.maxTimeoutSeconds) || accepted.maxTimeoutSeconds <= 0) throw new Error("Challenge timeout is invalid.");
-  if (challenge.resource?.url !== expectedResource || accepted.extra?.resource !== expectedResource) throw new Error(`Challenge resource mismatch: expected ${expectedResource}.`);
+  if (challenge.resource?.url !== expectedResource) throw new Error(`Challenge resource mismatch: expected ${expectedResource}.`);
 }
 
 function validateCreatedPayload(payload, accepted, buyerAddress, expectedResource) {

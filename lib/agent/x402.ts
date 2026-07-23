@@ -5,7 +5,7 @@ import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleRespon
 import { stableHash } from "@/lib/agent/crypto";
 import type { X402Config } from "@/lib/agent/config";
 
-export function paymentRequirements(config: X402Config, resourceUrl: string, requestHash: string): PaymentRequirements {
+export function paymentRequirements(config: X402Config): PaymentRequirements {
   return {
     scheme: "exact",
     network: config.network,
@@ -13,12 +13,12 @@ export function paymentRequirements(config: X402Config, resourceUrl: string, req
     amount: config.price,
     payTo: config.payTo,
     maxTimeoutSeconds: config.timeoutSeconds,
-    extra: { name: config.assetName, version: config.assetVersion, resource: resourceUrl, requestHash, assetSymbol: config.asset, assetDecimals: config.assetDecimals },
+    extra: { name: config.assetName, version: config.assetVersion },
   };
 }
 
-export function paymentRequiredResponse(config: X402Config, resourceUrl: string, requestHash: string, requestId: string, mockToken?: string): Response {
-  const required: PaymentRequired = { x402Version, resource: { url: resourceUrl, description: "Generate a ProcessForge SOP with deterministic analytics and compliance analysis", mimeType: "application/json" }, accepts: [paymentRequirements(config, resourceUrl, requestHash)] };
+export function paymentRequiredResponse(config: X402Config, resourceUrl: string, requestId: string, mockToken?: string): Response {
+  const required: PaymentRequired = { x402Version, resource: { url: resourceUrl, description: "Generate a ProcessForge SOP with deterministic analytics and compliance analysis", mimeType: "application/json" }, accepts: [paymentRequirements(config)] };
   return Response.json({ error: { code: "PAYMENT_REQUIRED", message: "Payment is required to generate this SOP.", request_id: requestId }, x402: required, ...(mockToken ? { mock_payment: { token: mockToken, header: "payment-signature" } } : {}) }, { status: 402, headers: { "payment-required": encodePaymentRequiredHeader(required), ...(mockToken ? { "x-mock-payment-token": mockToken } : {}), "cache-control": "no-store" } });
 }
 
@@ -26,11 +26,11 @@ export function mockPaymentToken(requestHash: string, resourceUrl: string): stri
 
 export function decodePayment(header: string): PaymentPayload { return decodePaymentSignatureHeader(header); }
 
-export function assertPaymentMatches(payload: PaymentPayload, expected: PaymentRequirements, resourceUrl: string, requestHash: string): void {
+export function assertPaymentMatches(payload: PaymentPayload, expected: PaymentRequirements, resourceUrl: string): void {
   const accepted = payload.accepted;
   if (accepted.scheme !== expected.scheme || accepted.network !== expected.network || accepted.asset.toLowerCase() !== expected.asset.toLowerCase() || accepted.amount !== expected.amount || accepted.payTo.toLowerCase() !== expected.payTo.toLowerCase()) throw new X402ProviderError("verify", "payment_requirement_mismatch");
   if (payload.resource?.url && payload.resource.url !== resourceUrl) throw new X402ProviderError("verify", "resource_mismatch");
-  if (accepted.extra?.resource !== resourceUrl || accepted.extra?.requestHash !== requestHash) throw new X402ProviderError("verify", "resource_mismatch");
+  if (accepted.extra?.name !== expected.extra?.name || accepted.extra?.version !== expected.extra?.version) throw new X402ProviderError("verify", "payment_requirement_mismatch");
 }
 
 export function paymentReference(payload: PaymentPayload): string { return stableHash(payload); }
