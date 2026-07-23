@@ -11,9 +11,11 @@ import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
 import {
   createAgentRequest,
+  findAgentPayment,
   findAgentRequest,
   paymentFingerprintExists,
-  persistSettledPayment,
+  reserveVerifiedPayment,
+  updatePaymentSettlement,
   updateAgentRequest,
   type AgentRequestRecord,
 } from "@/lib/agent/payment-store";
@@ -51,6 +53,27 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
   if (prepared instanceof NextResponse) return prepared;
   if (prepared.record.error_code === "PAYMENT_PERSISTENCE_FAILED") {
     return jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", prepared.requestId);
+  }
+  const existingPayment = await findAgentPayment(prepared.requestId);
+  if (existingPayment?.settlement_status === "settled") {
+    await updateAgentRequest(prepared.requestId, { status: "paid", error_code: null });
+    return null;
+  }
+  if (existingPayment && ["pending", "unknown"].includes(existingPayment.settlement_status)) {
+    return jsonError(
+      409,
+      "PAYMENT_SETTLEMENT_PENDING",
+      "A payment for this request is pending reconciliation. No new payment authorization will be issued.",
+      prepared.requestId,
+    );
+  }
+  if (prepared.record.status === "settling" || prepared.record.error_code === "PAYMENT_SETTLEMENT_UNKNOWN") {
+    return jsonError(
+      409,
+      "PAYMENT_SETTLEMENT_PENDING",
+      "Settlement status is unknown. Reconcile the existing payment before retrying.",
+      prepared.requestId,
+    );
   }
   if (["paid", "processing", "completed"].includes(prepared.record.status)) return null;
   const proxy = cachedProxy ??= createOfficialProxy();
@@ -139,6 +162,19 @@ function createOfficialProxy() {
     context.middlewareResult = "verified";
     try {
       await updateAgentRequest(context.requestId, { status: "settling", error_code: null });
+      await reserveVerifiedPayment({
+        request_id: context.requestId,
+        payment_reference: reference,
+        payer_address: result.payer ?? null,
+        recipient_address: requirements.payTo,
+        network: requirements.network,
+        asset: requirements.asset,
+        amount: requirements.amount,
+        verification_status: "verified",
+        settlement_status: "pending",
+        verified_at: new Date().toISOString(),
+        settled_at: null,
+      });
     } catch (error) {
       pendingFingerprints.delete(reference);
       throw error;
@@ -147,44 +183,43 @@ function createOfficialProxy() {
   server.onAfterSettle(async ({ result }) => {
     const context = requiredContext();
     const requirements = context.verifiedRequirements;
-    if (!context.paymentReference || !requirements || !result.transaction || (result.status && result.status !== "success")) {
-      throw new Error("SETTLEMENT_NOT_FINAL");
-    }
+    if (!context.paymentReference || !requirements) throw new Error("SETTLEMENT_CONTEXT_MISSING");
+    const settlementStatus =
+      result.status === "success" || (!result.status && result.success)
+        ? "settled"
+        : result.success === false && !["pending", "timeout"].includes(result.status ?? "")
+          ? "failed"
+          : "unknown";
     try {
       const settledAt = new Date().toISOString();
-      await persistSettledPayment({
-        request_id: context.requestId,
-        payment_reference: context.paymentReference,
-        replay_fingerprint: context.paymentReference,
-        settlement_reference: result.transaction,
+      await updatePaymentSettlement(context.requestId, {
         transaction_hash: result.transaction,
+        settlement_reference: result.transaction,
         payer_address: result.payer ?? context.verifiedPayer ?? null,
-        recipient_address: requirements.payTo,
-        network: requirements.network,
-        asset: requirements.asset,
-        amount: requirements.amount,
-        verification_status: "verified",
-        settlement_status: "settled",
-        verified_at: settledAt,
-        settled_at: settledAt,
+        settlement_status: settlementStatus,
+        settled_at: settlementStatus === "settled" ? settledAt : null,
       });
-      await updateAgentRequest(context.requestId, { status: "paid", error_code: null });
-      context.middlewareResult = "settled";
-      securityLog("settlement_completed", {
+      await updateAgentRequest(context.requestId, {
+        status: settlementStatus === "settled"
+          ? "paid"
+          : settlementStatus === "failed"
+            ? "payment_rejected"
+            : "settling",
+        error_code: settlementStatus === "settled"
+          ? null
+          : settlementStatus === "failed"
+            ? "PAYMENT_SETTLEMENT_FAILED"
+            : "PAYMENT_SETTLEMENT_UNKNOWN",
+      });
+      context.middlewareResult = settlementStatus === "settled" ? "settled" : "verified";
+      securityLog(settlementStatus === "settled" ? "settlement_completed" : "settlement_unknown", {
         request_id: context.requestId,
         provider: config.provider,
         network: result.network,
         settlement_reference: result.transaction,
+        settlement_status: settlementStatus,
       });
     } catch (error) {
-      try {
-        await updateAgentRequest(context.requestId, {
-          status: "payment_rejected",
-          error_code: "PAYMENT_PERSISTENCE_FAILED",
-        });
-      } catch {
-        // Facilitator settlement remains successful even if both persistence writes fail.
-      }
       securityLog("payment_persistence_failed", {
         request_id: context.requestId,
         provider: config.provider,
@@ -211,11 +246,16 @@ function createOfficialProxy() {
       context.officialErrorCode = safeError.code;
       context.officialErrorMessage = safeError.message;
       if (context.paymentReference) pendingFingerprints.delete(context.paymentReference);
-      await updateAgentRequest(context.requestId, {
-        status: "payment_rejected",
-        error_code: "PAYMENT_SETTLEMENT_FAILED",
-      });
-      securityLog("settlement_failed", { request_id: context.requestId, provider: config.provider });
+      try {
+        await updatePaymentSettlement(context.requestId, { settlement_status: "unknown" });
+        await updateAgentRequest(context.requestId, {
+          status: "settling",
+          error_code: "PAYMENT_SETTLEMENT_UNKNOWN",
+        });
+      } catch {
+        // The verified reservation remains pending and blocks a new authorization.
+      }
+      securityLog("settlement_unknown", { request_id: context.requestId, provider: config.provider });
     }
   });
 

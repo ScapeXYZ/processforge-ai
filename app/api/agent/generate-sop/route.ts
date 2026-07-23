@@ -5,6 +5,7 @@ import { generateAgentSop } from "@/lib/agent/generate";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import {
   findAgentRequest,
+  findAgentPayment,
   recordUsage,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
@@ -67,6 +68,14 @@ export async function POST(request: Request) {
   if (stored.error_code === "PAYMENT_PERSISTENCE_FAILED") {
     return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", 503, stored.id);
   }
+  if (stored.status === "settling" || stored.error_code === "PAYMENT_SETTLEMENT_UNKNOWN") {
+    return agentError(
+      "PAYMENT_SETTLEMENT_PENDING",
+      "Settlement is pending reconciliation. No new payment authorization will be issued.",
+      409,
+      stored.id,
+    );
+  }
   if (stored.status !== "paid") {
     return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, stored.id);
   }
@@ -79,6 +88,7 @@ export async function POST(request: Request) {
     await updateAgentRequest(stored.id, { status: "processing" });
     securityLog("generation_started", { request_id: stored.id, route: "/api/agent/generate-sop" });
     const generated = await generateAgentSop(validated.input);
+    const payment = await findAgentPayment(stored.id);
     const completedAt = new Date().toISOString();
     const duration = Date.now() - startedAt;
     const response = {
@@ -86,6 +96,15 @@ export async function POST(request: Request) {
       service: AGENT_SERVICE,
       status: "completed",
       ...generated,
+      payment: payment ? {
+        status: payment.settlement_status,
+        transaction: payment.transaction_hash,
+        settlement_reference: payment.settlement_reference ?? payment.transaction_hash,
+        payer: payment.payer_address,
+        recipient: payment.recipient_address,
+        amount: payment.amount,
+        network: payment.network,
+      } : null,
       generated_at: completedAt,
       processing_time_ms: duration,
       schema_version: AGENT_SCHEMA_VERSION,

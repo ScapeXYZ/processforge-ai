@@ -53,8 +53,14 @@ assert(!/^NEXT_PUBLIC_(APP|SITE)_URL=/m.test(envExample), "Server-only applicati
 for (const file of ["docs/PRODUCTION_DEPLOYMENT.md", "docs/PRODUCTION_CHECKLIST.md", "docs/CUSTOM_DOMAIN_CHECKLIST.md", ".env.production.example", ".github/workflows/ci.yml", "scripts/verify-deployment.mjs", "app/privacy/page.tsx", "app/terms/page.tsx", "app/acceptable-use/page.tsx", "app/ai-disclaimer/page.tsx", "app/data-handling/page.tsx"]) assert(existsSync(resolve(file)), `Required production artifact ${file}`, "present");
 const officialMiddlewareSource = readFileSync(resolve("lib/agent/official-x402-middleware.ts"), "utf8");
 assert(officialMiddlewareSource.includes("paymentProxy") && officialMiddlewareSource.includes("OKXFacilitatorClient"), "Official payment middleware", "OKX SDK wired");
+const paymentStoreSource = readFileSync(resolve("lib/agent/payment-store.ts"), "utf8");
+const packageSource = readFileSync(resolve("package.json"), "utf8");
+assert(officialMiddlewareSource.includes("syncSettle: true"), "Synchronous x402 settlement", "enabled");
+assert(officialMiddlewareSource.includes("reserveVerifiedPayment") && paymentStoreSource.includes("settlement_status"), "Pre-settlement replay reservation", "durable");
+assert(officialMiddlewareSource.includes("PAYMENT_SETTLEMENT_PENDING") && officialMiddlewareSource.includes('"unknown"'), "Unknown settlement blocking", "enabled");
+assert(packageSource.includes("reconcile:x402-settlements"), "Settlement reconciliation command", "present");
 assert(existsSync(resolve("legacy/x402-custom/runtime/x402.ts")), "Legacy x402 isolation", "custom runtime moved");
-const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql", "202607230001_harden_x402_payment_replay.sql"];
+const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql", "202607230001_harden_x402_payment_replay.sql", "202607230002_x402_unknown_settlement.sql"];
 assert(migrations.every(file => existsSync(resolve("supabase/migrations", file))), "Required migrations", `${migrations.length} files present`);
 assert(existsSync(resolve(".next/BUILD_ID")) || existsSync(resolve(".next/build-manifest.json")), "Production build artifact", "run npm run build before release verification");
 
