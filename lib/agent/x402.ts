@@ -4,6 +4,7 @@ import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymen
 import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse, VerifyResponse } from "@okxweb3/x402-core/types";
 import { stableHash } from "@/lib/agent/crypto";
 import type { X402Config } from "@/lib/agent/config";
+import { observeFacilitatorHttp } from "@/lib/agent/facilitator-diagnostics";
 
 export function paymentRequirements(config: X402Config): PaymentRequirements {
   return {
@@ -36,19 +37,23 @@ export function assertPaymentMatches(payload: PaymentPayload, expected: PaymentR
 export function paymentReference(payload: PaymentPayload): string { return stableHash(payload); }
 
 export async function verifyPayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse> {
+  const observed = await observeFacilitatorHttp(config.facilitatorUrl, () => facilitator(config).verify(payload, requirements));
   try {
-    const verified = await facilitator(config).verify(payload, requirements);
+    if (observed.error) throw observed.error;
+    const verified = observed.value!;
     if (!verified.isValid) throw new X402ProviderError("verify", verified.invalidReason ?? "verification_failed", undefined, officialRequestId(verified.extensions));
     return verified;
-  } catch (error) { throw normalizeProviderError("verify", error); }
+  } catch (error) { throw normalizeProviderError("verify", error, observed.http); }
 }
 
 export async function settlePayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
+  const observed = await observeFacilitatorHttp(config.facilitatorUrl, () => facilitator(config).settle(payload, requirements));
   try {
-    const settlement = await facilitator(config).settle(payload, requirements);
+    if (observed.error) throw observed.error;
+    const settlement = observed.value!;
     if (!settlement.success || settlement.status !== "success") throw new X402ProviderError("settle", settlement.errorReason ?? settlement.status ?? "settlement_failed", undefined, officialRequestId(settlement.extensions));
     return settlement;
-  } catch (error) { throw normalizeProviderError("settle", error); }
+  } catch (error) { throw normalizeProviderError("settle", error, observed.http); }
 }
 
 export function paymentResponseHeader(settlement: SettleResponse): string { return encodePaymentResponseHeader(settlement); }
@@ -58,22 +63,22 @@ function facilitator(config: X402Config) {
 }
 
 export class X402ProviderError extends Error {
-  constructor(public readonly operation: "verify" | "settle", public readonly reason: string, public readonly httpStatus?: number, public readonly providerRequestId?: string) { super(`X402_${operation.toUpperCase()}_FAILED`); this.name = "X402ProviderError"; }
+  constructor(public readonly operation: "verify" | "settle", public readonly reason: string, public readonly httpStatus?: number, public readonly providerRequestId?: string, public readonly providerErrorCode?: string, public readonly providerErrorMessage?: string) { super(`X402_${operation.toUpperCase()}_FAILED`); this.name = "X402ProviderError"; }
 }
 
 export function safePaymentFailure(error: unknown) {
   const normalized = error instanceof X402ProviderError ? error : normalizeProviderError("verify", error);
-  return { operation: normalized.operation, reason: safeReason(normalized.reason), reason_message: paymentReasonMessage(normalized.reason), ...(normalized.httpStatus ? { facilitator_http_status: normalized.httpStatus } : {}), ...(normalized.providerRequestId ? { facilitator_request_id: normalized.providerRequestId } : {}) };
+  return { operation: normalized.operation, reason: safeReason(normalized.reason), reason_message: paymentReasonMessage(normalized.reason), ...(normalized.httpStatus ? { facilitator_http_status: normalized.httpStatus } : {}), ...(normalized.providerErrorCode ? { facilitator_error_code: normalized.providerErrorCode } : {}), ...(normalized.providerErrorMessage ? { facilitator_error_message: normalized.providerErrorMessage } : {}), ...(normalized.providerRequestId ? { facilitator_request_id: normalized.providerRequestId } : {}) };
 }
 
-function normalizeProviderError(operation: "verify" | "settle", error: unknown): X402ProviderError {
+function normalizeProviderError(operation: "verify" | "settle", error: unknown, http: { status?: number; code?: string; message?: string; requestId?: string } = {}): X402ProviderError {
   if (error instanceof X402ProviderError) return error;
   const candidate = error as { invalidReason?: unknown; errorReason?: unknown; statusCode?: unknown; message?: unknown };
   const statusFromMessage = typeof candidate?.message === "string" ? /OKX (?:verify|settle) failed: (\d{3})/.exec(candidate.message)?.[1] : undefined;
-  const status = typeof candidate?.statusCode === "number" ? candidate.statusCode : statusFromMessage ? Number(statusFromMessage) : undefined;
+  const status = http.status ?? (typeof candidate?.statusCode === "number" ? candidate.statusCode : statusFromMessage ? Number(statusFromMessage) : undefined);
   const supplied = operation === "verify" ? candidate?.invalidReason : candidate?.errorReason;
   const reason = typeof supplied === "string" && supplied ? supplied : status ? `facilitator_http_${status}` : "facilitator_unavailable";
-  return new X402ProviderError(operation, reason, status);
+  return new X402ProviderError(operation, reason, status, http.requestId, http.code, http.message);
 }
 
 function officialRequestId(extensions?: Record<string, unknown>): string | undefined {

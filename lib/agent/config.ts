@@ -48,6 +48,8 @@ export function getX402Config(): X402Config {
   if (!/^\d+$/.test(config.price) || BigInt(config.price || "0") <= BigInt(0)) config.errors.push("price must be a positive atomic-unit integer");
   if (!Number.isInteger(assetDecimals) || assetDecimals < 0 || assetDecimals > 255) config.errors.push("invalid asset decimals");
   if (production) {
+    try { const facilitator = new URL(config.facilitatorUrl); if (facilitator.origin !== "https://web3.okx.com" || facilitator.pathname !== "/") config.errors.push("production facilitator URL must be https://web3.okx.com"); }
+    catch { config.errors.push("invalid facilitator URL"); }
     if (!officialAsset || officialAsset.address.toLowerCase() !== assetAddress.toLowerCase() || officialAsset.decimals !== assetDecimals || !officialAsset.name || !officialAsset.version) config.errors.push("asset is not an approved X Layer network asset");
     if (!config.apiKey || !config.secretKey || !config.passphrase) config.errors.push("missing OKX facilitator credentials");
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY || !process.env.NEXT_PUBLIC_SUPABASE_URL) config.errors.push("missing durable payment storage");
