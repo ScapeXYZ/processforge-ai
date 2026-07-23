@@ -1,4 +1,4 @@
-import { AGENT_SCHEMA_VERSION, AGENT_SERVICE, AGENT_VERSION, getX402Config } from "@/lib/agent/config";
+import { AGENT_SCHEMA_VERSION, AGENT_SERVICE, AGENT_VERSION, getX402Config, type X402Config } from "@/lib/agent/config";
 import { getAppBaseUrl } from "@/lib/env/server";
 import { checkRateLimit, requestClientKey } from "@/lib/security/rate-limit";
 
@@ -13,11 +13,27 @@ export async function GET(request: Request) {
     available_services: [{ id: AGENT_SERVICE, method: "POST", endpoint: `${origin}/api/agent/generate-sop`, schema_version: AGENT_SCHEMA_VERSION }],
     request_schema: { required: ["title", "description", "industry", "department", "audience"], optional: ["company_context", "requirements", "compliance_frameworks", "knowledge_context", "output_format"] },
     response_schema: { fields: ["request_id", "service", "status", "sop", "analytics", "compliance", "assumptions", "warnings", "generated_at", "processing_time_ms", "schema_version"] },
-    pricing: {
-      enabled: config.ready && config.serviceEnabled, scheme: "exact", amount: config.price || null, amount_format: "atomic_units",
-      asset: config.asset || null, asset_address: config.assetAddress || null, asset_decimals: Number.isInteger(config.assetDecimals) ? config.assetDecimals : null,
-      network: config.network, paid_endpoint: `${origin}/api/agent/generate-sop`,
-    },
+    pricing: buildPricingMetadata(config, origin),
     health_url: `${origin}/api/agent/health`, documentation_url: `${origin}/agent-docs`,
   }, { headers: { "cache-control": "public, max-age=60" } });
+}
+
+function buildPricingMetadata(config: X402Config, origin: string) {
+  const pricing = {
+    enabled: config.ready && config.serviceEnabled,
+    scheme: "exact",
+    amount: config.price || null,
+    amount_format: "atomic_units",
+    asset: config.asset || null,
+    asset_address: config.assetAddress,
+    asset_decimals: config.assetDecimals,
+    network: config.network,
+    paid_endpoint: `${origin}/api/agent/generate-sop`,
+  };
+
+  if (pricing.enabled && (!pricing.asset_address || !Number.isInteger(pricing.asset_decimals))) {
+    throw new Error("Enabled x402 pricing metadata requires asset_address and asset_decimals.");
+  }
+
+  return pricing;
 }
