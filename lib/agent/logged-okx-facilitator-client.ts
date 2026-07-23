@@ -43,13 +43,21 @@ function safeSettlementError(error: unknown) {
   const root = asRecord(error);
   const response = asRecord(root.response);
   const data = asRecord(response.data);
+  const errorMessage = error instanceof Error ? error.message : undefined;
+  const httpStatus =
+    safeNumber(root.status)
+    ?? safeNumber(response.status)
+    ?? statusFromMessage(errorMessage);
   return {
-    httpStatus: safeNumber(root.status) ?? safeNumber(response.status),
-    code: safeText(data.code) ?? safeText(root.code) ?? "OKX_SETTLEMENT_ERROR",
+    httpStatus,
+    code:
+      safeText(data.code)
+      ?? safeText(root.code)
+      ?? (httpStatus ? `OKX_SETTLEMENT_HTTP_${httpStatus}` : "OKX_SETTLEMENT_ERROR"),
     message: scrub(
       safeText(data.msg)
         ?? safeText(data.message)
-        ?? (error instanceof Error ? error.message : undefined)
+        ?? errorMessage
         ?? "The OKX facilitator settlement call failed.",
     ),
     settlementReference:
@@ -68,6 +76,11 @@ function asRecord(value: unknown): ErrorRecord {
 
 function safeNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function statusFromMessage(value: string | undefined): number | undefined {
+  const match = value?.match(/OKX settle failed:\s*(\d{3})/);
+  return match ? Number(match[1]) : undefined;
 }
 
 function safeText(value: unknown): string | undefined {
