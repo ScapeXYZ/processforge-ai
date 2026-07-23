@@ -24,11 +24,17 @@ import { securityLog } from "@/lib/security/logger";
 type PaymentRequestContext = ValidAgentRequest & {
   requestId: string;
   record: AgentRequestRecord;
+  paymentSignaturePresent: boolean;
+  xPaymentHeaderPresent: boolean;
+  middlewareResult: "challenge" | "verified" | "settled" | "rejected";
+  officialErrorCode?: string;
+  officialErrorMessage?: string;
   paymentReference?: string;
   verifiedPayer?: string;
   verifiedRequirements?: PaymentRequirements;
 };
 
+const PAYMENT_ROUTE = "/api/agent/generate-sop";
 const requestContext = new AsyncLocalStorage<PaymentRequestContext>();
 const pendingFingerprints = new Set<string>();
 let cachedProxy: ((request: NextRequest) => Promise<NextResponse>) | undefined;
@@ -48,7 +54,12 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
   }
   if (["paid", "processing", "completed"].includes(prepared.record.status)) return null;
   const proxy = cachedProxy ??= createOfficialProxy();
-  return requestContext.run(prepared, () => proxy(request));
+  const response = await requestContext.run(prepared, () => proxy(request));
+  if (response.status === 402 && (prepared.paymentSignaturePresent || prepared.xPaymentHeaderPresent)) {
+    prepared.middlewareResult = "rejected";
+  }
+  logMiddlewareResult(prepared, response.status);
+  return response;
 }
 
 async function prepareRequest(
@@ -86,7 +97,14 @@ async function prepareRequest(
     record = await findAgentRequest(validated.idempotencyKey);
     if (!record) throw new Error("AGENT_REQUEST_NOT_DURABLE");
   }
-  return { ...validated, requestId: record.id, record };
+  return {
+    ...validated,
+    requestId: record.id,
+    record,
+    paymentSignaturePresent: request.headers.has("payment-signature"),
+    xPaymentHeaderPresent: request.headers.has("x-payment"),
+    middlewareResult: "challenge",
+  };
 }
 
 function createOfficialProxy() {
@@ -118,6 +136,7 @@ function createOfficialProxy() {
     context.paymentReference = reference;
     context.verifiedPayer = result.payer;
     context.verifiedRequirements = requirements;
+    context.middlewareResult = "verified";
     try {
       await updateAgentRequest(context.requestId, { status: "settling", error_code: null });
     } catch (error) {
@@ -150,6 +169,7 @@ function createOfficialProxy() {
         settled_at: settledAt,
       });
       await updateAgentRequest(context.requestId, { status: "paid", error_code: null });
+      context.middlewareResult = "settled";
       securityLog("settlement_completed", {
         request_id: context.requestId,
         provider: config.provider,
@@ -174,9 +194,22 @@ function createOfficialProxy() {
       pendingFingerprints.delete(context.paymentReference);
     }
   });
-  server.onSettleFailure(async () => {
+  server.onVerifyFailure(async ({ error }) => {
     const context = requestContext.getStore();
     if (context) {
+      const safeError = safeOfficialError(error);
+      context.middlewareResult = "rejected";
+      context.officialErrorCode = safeError.code;
+      context.officialErrorMessage = safeError.message;
+    }
+  });
+  server.onSettleFailure(async ({ error }) => {
+    const context = requestContext.getStore();
+    if (context) {
+      const safeError = safeOfficialError(error);
+      context.middlewareResult = "rejected";
+      context.officialErrorCode = safeError.code;
+      context.officialErrorMessage = safeError.message;
       if (context.paymentReference) pendingFingerprints.delete(context.paymentReference);
       await updateAgentRequest(context.requestId, {
         status: "payment_rejected",
@@ -235,6 +268,34 @@ function requiredContext(): PaymentRequestContext {
   const context = requestContext.getStore();
   if (!context) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
   return context;
+}
+
+function safeOfficialError(error: unknown): { code: string; message: string } {
+  const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  return {
+    code: scrubOfficialText(typeof value.code === "string" ? value.code : "OFFICIAL_X402_ERROR"),
+    message: scrubOfficialText(error instanceof Error ? error.message : "The official x402 middleware rejected the request."),
+  };
+}
+
+function scrubOfficialText(value: string): string {
+  return value
+    .replace(/0x[a-fA-F0-9]{32,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9+/=_-]{80,}/g, "[redacted]")
+    .slice(0, 160);
+}
+
+function logMiddlewareResult(context: PaymentRequestContext, status: number): void {
+  securityLog("x402_middleware", {
+    request_id: context.requestId,
+    route: PAYMENT_ROUTE,
+    payment_signature_present: context.paymentSignaturePresent,
+    x_payment_header_present: context.xPaymentHeaderPresent,
+    middleware_result: context.middlewareResult,
+    official_error_code: context.officialErrorCode,
+    official_error_message: context.officialErrorMessage,
+    http_response_status: status,
+  });
 }
 
 function jsonError(status: number, code: string, message: string, requestId: string | null = null) {

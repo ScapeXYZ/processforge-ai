@@ -11,6 +11,7 @@
     "verify:x402:production": "node scripts/verify-official-x402.mjs --production",
     "verify:x402:testnet": "node scripts/verify-x402-testnet.mjs",
     "test:x402:testnet-paid": "node scripts/test-x402-testnet-paid.mjs",
+    "test:x402:mainnet-paid": "node scripts/test-x402-mainnet-paid.mjs",
     "verify:release": "node scripts/verify-release.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
     "seed:demo": "node scripts/seed-demo-data.mjs"
