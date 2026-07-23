@@ -44,7 +44,14 @@ if (!mockToken) throw new Error("Mock payment token was not advertised in develo
 const mockPaid = await get(`${baseUrl}/api/agent/generate-sop`, { method: "POST", headers: { ...headers, "idempotency-key": paidIdempotencyKey, "payment-signature": mockToken }, body: JSON.stringify(body) }, "mock paid retry");
 const mockResult = await mockPaid.json();
 if (mockPaid.status !== 200 || mockResult?.status !== "completed" || !mockResult?.sop || !mockResult?.analytics || !mockResult?.compliance) throw new Error(`Mock paid retry failed (${mockPaid.status}): ${JSON.stringify(mockResult)}`);
-console.log(JSON.stringify({ metadata: "pass", health: healthBody.status, method_check: "pass", invalid_request: "pass", unpaid_status: unpaid.status, mock_paid_status: mockPaid.status, advertised_network: network }, null, 2));
+const replay = await get(`${baseUrl}/api/agent/generate-sop`, { method: "POST", headers: { ...headers, "idempotency-key": `${paidIdempotencyKey}-replay`, "payment-signature": mockToken }, body: JSON.stringify(body) }, "reused payment proof");
+const replayBody = await replay.json();
+if (replay.status !== 409 || replayBody?.error?.code !== "PAYMENT_REPLAYED") throw new Error(`Expected reused proof to return 409 PAYMENT_REPLAYED, received ${replay.status}: ${JSON.stringify(replayBody)}`);
+const changedBody = { ...body, description: `${body.description} Changed content must conflict.` };
+const conflict = await get(`${baseUrl}/api/agent/generate-sop`, { method: "POST", headers: { ...headers, "idempotency-key": paidIdempotencyKey }, body: JSON.stringify(changedBody) }, "idempotency body conflict");
+const conflictBody = await conflict.json();
+if (conflict.status !== 409 || conflictBody?.error?.code !== "IDEMPOTENCY_CONFLICT") throw new Error(`Expected changed body to return 409 IDEMPOTENCY_CONFLICT, received ${conflict.status}: ${JSON.stringify(conflictBody)}`);
+console.log(JSON.stringify({ metadata: "pass", health: healthBody.status, method_check: "pass", invalid_request: "pass", unpaid_status: unpaid.status, mock_paid_status: mockPaid.status, replay_status: replay.status, idempotency_conflict_status: conflict.status, advertised_network: network }, null, 2));
 
 const proof = process.env.OKX_X402_PAYMENT_HEADER;
 if (proof) {

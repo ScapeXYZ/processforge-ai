@@ -1,28 +1,46 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+const localPaymentFingerprints = new Set<string>();
+const localAgentRequestsByKey = new Map<string, Record<string, unknown>>();
+const localAgentRequestsById = new Map<string, Record<string, unknown>>();
+
 export async function findAgentRequest(idempotencyKey: string) {
-  const db = requirePaymentDatabase(); if (!db) return null;
+  const db = requirePaymentDatabase(); if (!db) return localAgentRequestsByKey.get(idempotencyKey) ?? null;
   const { data, error } = await db.from("agent_requests").select("*").eq("idempotency_key", idempotencyKey).maybeSingle();
   if (error) throw new Error(`Agent storage lookup failed: ${error.code}`);
   return data as Record<string, unknown> | null;
 }
 
 export async function createAgentRequest(row: Record<string, unknown>) {
-  const db = requirePaymentDatabase(); if (!db) return;
+  const db = requirePaymentDatabase();
+  if (!db) {
+    const id = String(row.id); const key = String(row.idempotency_key);
+    if (!localAgentRequestsByKey.has(key)) { localAgentRequestsByKey.set(key, { ...row }); localAgentRequestsById.set(id, localAgentRequestsByKey.get(key)!); }
+    return;
+  }
   const { error } = await db.from("agent_requests").insert(row);
   if (error && error.code !== "23505") throw new Error(`Agent storage insert failed: ${error.code}`);
 }
 
 export async function updateAgentRequest(id: string, patch: Record<string, unknown>) {
-  const db = requirePaymentDatabase(); if (!db) return;
+  const db = requirePaymentDatabase();
+  if (!db) { const row = localAgentRequestsById.get(id); if (row) Object.assign(row, patch); return; }
   const { error } = await db.from("agent_requests").update(patch).eq("id", id); if (error) throw new Error(`Agent storage update failed: ${error.code}`);
 }
 
-export async function reservePayment(row: Record<string, unknown>): Promise<boolean> {
-  const db = requirePaymentDatabase(); if (!db) return true;
+export async function reserveVerifiedPayment(row: Record<string, unknown>): Promise<"reserved" | "replay"> {
+  const db = requirePaymentDatabase();
+  if (!db) {
+    const fingerprint = String(row.replay_fingerprint ?? row.payment_reference ?? "");
+    if (!fingerprint || localPaymentFingerprints.has(fingerprint)) return "replay";
+    localPaymentFingerprints.add(fingerprint);
+    return "reserved";
+  }
   const { error } = await db.from("agent_payments").insert(row);
-  return !error;
+  if (!error) return "reserved";
+  if (error.code === "23505") return "replay";
+  throw new Error(`Payment storage reservation failed: ${error.code}`);
 }
 
 export async function updatePayment(reference: string, patch: Record<string, unknown>) {

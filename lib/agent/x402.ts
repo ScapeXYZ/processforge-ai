@@ -1,7 +1,7 @@
 import "server-only";
 import { OKXFacilitatorClient, x402Version } from "@okxweb3/x402-core";
 import { decodePaymentSignatureHeader, encodePaymentRequiredHeader, encodePaymentResponseHeader } from "@okxweb3/x402-core/http";
-import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse } from "@okxweb3/x402-core/types";
+import type { PaymentPayload, PaymentRequired, PaymentRequirements, SettleResponse, VerifyResponse } from "@okxweb3/x402-core/types";
 import { stableHash } from "@/lib/agent/crypto";
 import type { X402Config } from "@/lib/agent/config";
 
@@ -22,7 +22,7 @@ export function paymentRequiredResponse(config: X402Config, resourceUrl: string,
   return Response.json({ error: { code: "PAYMENT_REQUIRED", message: "Payment is required to generate this SOP.", request_id: requestId }, x402: required, ...(mockToken ? { mock_payment: { token: mockToken, header: "payment-signature" } } : {}) }, { status: 402, headers: { "payment-required": encodePaymentRequiredHeader(required), ...(mockToken ? { "x-mock-payment-token": mockToken } : {}), "cache-control": "no-store" } });
 }
 
-export function mockPaymentToken(idempotencyKey: string, requestHash: string, resourceUrl: string): string { return `mock_${stableHash({ idempotencyKey, requestHash, resourceUrl })}`; }
+export function mockPaymentToken(requestHash: string, resourceUrl: string): string { return `mock_${stableHash({ requestHash, resourceUrl })}`; }
 
 export function decodePayment(header: string): PaymentPayload { return decodePaymentSignatureHeader(header); }
 
@@ -35,13 +35,20 @@ export function assertPaymentMatches(payload: PaymentPayload, expected: PaymentR
 
 export function paymentReference(payload: PaymentPayload): string { return stableHash(payload); }
 
-export async function verifyAndSettle(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<{ payer: string | null; settlement: SettleResponse }> {
-  const facilitator = new OKXFacilitatorClient({ apiKey: config.apiKey, secretKey: config.secretKey, passphrase: config.passphrase, baseUrl: config.facilitatorUrl, syncSettle: true });
-  const verified = await facilitator.verify(payload, requirements);
+export async function verifyPayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse> {
+  const verified = await facilitator(config).verify(payload, requirements);
   if (!verified.isValid) throw new Error(`PAYMENT_INVALID:${verified.invalidReason ?? "verification_failed"}`);
-  const settlement = await facilitator.settle(payload, requirements);
+  return verified;
+}
+
+export async function settlePayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
+  const settlement = await facilitator(config).settle(payload, requirements);
   if (!settlement.success || settlement.status !== "success") throw new Error(`PAYMENT_SETTLEMENT_FAILED:${settlement.errorReason ?? settlement.status ?? "settlement_failed"}`);
-  return { payer: settlement.payer ?? verified.payer ?? null, settlement };
+  return settlement;
 }
 
 export function paymentResponseHeader(settlement: SettleResponse): string { return encodePaymentResponseHeader(settlement); }
+
+function facilitator(config: X402Config) {
+  return new OKXFacilitatorClient({ apiKey: config.apiKey, secretKey: config.secretKey, passphrase: config.passphrase, baseUrl: config.facilitatorUrl, syncSettle: true });
+}

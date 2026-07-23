@@ -8,8 +8,8 @@ import { stableHash } from "@/lib/agent/crypto";
 import { generateAgentSop } from "@/lib/agent/generate";
 import { generateMockAgentSop } from "@/lib/agent/mock";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
-import { createAgentRequest, findAgentRequest, recordUsage, reservePayment, updateAgentRequest, updatePayment } from "@/lib/agent/storage";
-import { assertPaymentMatches, decodePayment, mockPaymentToken, paymentReference, paymentRequiredResponse, paymentRequirements, paymentResponseHeader, verifyAndSettle } from "@/lib/agent/x402";
+import { createAgentRequest, findAgentRequest, recordUsage, reserveVerifiedPayment, updateAgentRequest, updatePayment } from "@/lib/agent/storage";
+import { assertPaymentMatches, decodePayment, mockPaymentToken, paymentReference, paymentRequiredResponse, paymentRequirements, paymentResponseHeader, settlePayment, verifyPayment } from "@/lib/agent/x402";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -48,33 +48,38 @@ export async function POST(request: Request) {
   if (!existing) await createAgentRequest({ id: effectiveId, service: AGENT_SERVICE, idempotency_key: idempotencyKey, request_hash: hash, status: "payment_required", network: config.network, price: config.price, asset: config.assetAddress });
   log("request_received", effectiveId, { duration_ms: Date.now() - startedAt });
   const paymentHeader = request.headers.get("payment-signature") || request.headers.get("x-payment");
-  const expectedMockToken = config.mock ? mockPaymentToken(idempotencyKey, hash, resourceUrl) : undefined;
+  const expectedMockToken = config.mock ? mockPaymentToken(hash, resourceUrl) : undefined;
   if (!paymentHeader) { log("payment_required", effectiveId); return paymentRequiredResponse(config, resourceUrl, hash, effectiveId, expectedMockToken); }
   let settlementHeader: string | undefined;
   if (existing?.status !== "paid") {
+    let reservedReference: string | undefined;
     try {
       if (!config.mock && (!config.ready || !process.env.SUPABASE_SERVICE_ROLE_KEY)) throw new Error("PAYMENT_CONFIGURATION_ERROR");
       const payload = config.mock ? null : decodePayment(paymentHeader); const requirements = paymentRequirements(config, resourceUrl, hash);
       if (config.mock && paymentHeader !== expectedMockToken) throw new Error("PAYMENT_INVALID");
       if (payload) assertPaymentMatches(payload, requirements, resourceUrl, hash);
       const reference = payload ? paymentReference(payload) : stableHash(paymentHeader);
-      const reserved = await reservePayment({ request_id: effectiveId, payment_reference: reference, replay_fingerprint: reference, recipient_address: config.payTo, network: config.network, asset: config.assetAddress, amount: config.price, verification_status: "pending", settlement_status: "pending" });
-      if (!reserved) { log("payment_rejected", effectiveId, { reason: "replay" }); return agentError("PAYMENT_REPLAYED", "This payment proof has already been used.", 409, effectiveId); }
+      const verified = payload ? await verifyPayment(config, payload, requirements) : null;
+      const reservation = await reserveVerifiedPayment({ request_id: effectiveId, payment_reference: reference, replay_fingerprint: reference, recipient_address: config.payTo, network: config.network, asset: config.assetAddress, amount: config.price, payer_address: verified?.payer ?? (config.mock ? "mock-payer" : null), verification_status: "verified", settlement_status: "pending", verified_at: new Date().toISOString() });
+      if (reservation === "replay") { log("payment_rejected", effectiveId, { reason: "replay" }); return agentError("PAYMENT_REPLAYED", "This payment proof has already been used for another request or settlement.", 409, effectiveId); }
+      reservedReference = reference;
       await updateAgentRequest(effectiveId, { status: "settling" });
       if (config.mock) {
         settlementHeader = Buffer.from(JSON.stringify({ success: true, status: "success", network: config.network, transaction: `mock-${reference.slice(0, 24)}` })).toString("base64");
-        await updatePayment(reference, { payer_address: "mock-payer", verification_status: "verified", settlement_status: "settled", settlement_reference: `mock-${reference}`, verified_at: new Date().toISOString(), settled_at: new Date().toISOString(), transaction_hash: `mock-${reference}` });
+        await updatePayment(reference, { settlement_status: "settled", settlement_reference: `mock-${reference}`, settled_at: new Date().toISOString(), transaction_hash: `mock-${reference}` });
       } else if (payload) {
-        const paid = await verifyAndSettle(config, payload, requirements);
-        settlementHeader = paymentResponseHeader(paid.settlement);
-        await updatePayment(reference, { payer_address: paid.payer, verification_status: "verified", settlement_status: "settled", settlement_reference: paid.settlement.transaction, verified_at: new Date().toISOString(), settled_at: new Date().toISOString(), transaction_hash: paid.settlement.transaction });
+        const settlement = await settlePayment(config, payload, requirements);
+        settlementHeader = paymentResponseHeader(settlement);
+        await updatePayment(reference, { payer_address: settlement.payer ?? verified?.payer ?? null, settlement_status: "settled", settlement_reference: settlement.transaction, settled_at: new Date().toISOString(), transaction_hash: settlement.transaction });
       }
       await updateAgentRequest(effectiveId, { status: "paid" }); log("payment_verified", effectiveId, { provider: config.provider }); log("settlement_completed", effectiveId, { settlement_status: "success", provider: config.provider });
     } catch (error) {
       log("payment_rejected", effectiveId, { reason: safeError(error) });
+      if (reservedReference) await updatePayment(reservedReference, { settlement_status: "failed" });
       await updateAgentRequest(effectiveId, { status: "payment_rejected", error_code: "PAYMENT_INVALID" });
-      const message = error instanceof Error && error.message.startsWith("PAYMENT_SETTLEMENT_FAILED") ? "Payment settlement failed." : "Payment verification failed.";
-      return agentError(message.startsWith("Payment settlement") ? "PAYMENT_SETTLEMENT_FAILED" : "PAYMENT_INVALID", message, 402, effectiveId);
+      if (error instanceof Error && error.message.startsWith("Payment storage")) return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment storage is temporarily unavailable.", 503, effectiveId);
+      const settlementFailed = error instanceof Error && error.message.startsWith("PAYMENT_SETTLEMENT_FAILED");
+      return agentError(settlementFailed ? "PAYMENT_SETTLEMENT_FAILED" : "PAYMENT_INVALID", settlementFailed ? "Payment settlement failed." : "Payment verification failed.", 402, effectiveId);
     }
   }
   const release = acquireGenerationSlot();
