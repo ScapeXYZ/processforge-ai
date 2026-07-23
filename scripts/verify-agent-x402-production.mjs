@@ -11,7 +11,7 @@ const metadata = await request("/api/agent"); assert(metadata.response.status ==
 const health = await request("/api/agent/health"); assert(health.response.status === 200, `health returned ${health.response.status}`);
 const paymentConfiguration = health.body?.payment_configuration;
 assert(paymentConfiguration?.status === "ready", `health payment_configuration.status: expected "ready", received ${JSON.stringify(paymentConfiguration?.status)}`);
-assert(paymentConfiguration?.provider === "okx", `health payment_configuration.provider: expected "okx", received ${JSON.stringify(paymentConfiguration?.provider)}`);
+assert(paymentConfiguration?.provider === "okx-official", `health payment_configuration.provider: expected "okx-official", received ${JSON.stringify(paymentConfiguration?.provider)}`);
 assert(paymentConfiguration?.network === "eip155:196", `health payment_configuration.network: expected "eip155:196", received ${JSON.stringify(paymentConfiguration?.network)}`);
 const pricing = metadata.body?.pricing;
 assert(pricing?.enabled === true, `metadata pricing.enabled: expected true, received ${JSON.stringify(pricing?.enabled)}`);
