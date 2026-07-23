@@ -1,7 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
 import type { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
@@ -9,6 +8,7 @@ import { paymentProxy } from "@okxweb3/x402-next";
 import { NextResponse, type NextRequest } from "next/server";
 import { getAppBaseUrl } from "@/lib/env/server";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
+import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
 import {
   createAgentRequest,
   findAgentRequest,
@@ -110,13 +110,13 @@ async function prepareRequest(
 function createOfficialProxy() {
   const config = getOfficialPaymentConfig();
   if (!config.ready) throw new Error("OFFICIAL_PAYMENT_NOT_READY");
-  const facilitator = new OKXFacilitatorClient({
+  const facilitator = new LoggedOKXFacilitatorClient({
     apiKey: config.apiKey,
     secretKey: config.secretKey,
     passphrase: config.passphrase,
     baseUrl: config.facilitatorUrl,
     syncSettle: true,
-  });
+  }, () => requestContext.getStore()?.requestId ?? null);
   const server = new x402ResourceServer(facilitator)
     .register(config.network, new ExactEvmScheme());
 
