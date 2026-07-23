@@ -9,7 +9,7 @@ import { generateAgentSop } from "@/lib/agent/generate";
 import { generateMockAgentSop } from "@/lib/agent/mock";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { createAgentRequest, findAgentRequest, recordUsage, reserveVerifiedPayment, updateAgentRequest, updatePayment } from "@/lib/agent/storage";
-import { assertPaymentMatches, decodePayment, mockPaymentToken, paymentReference, paymentRequiredResponse, paymentRequirements, paymentResponseHeader, settlePayment, verifyPayment } from "@/lib/agent/x402";
+import { assertPaymentMatches, decodePayment, mockPaymentToken, paymentReference, paymentRequiredResponse, paymentRequirements, paymentResponseHeader, safePaymentFailure, settlePayment, verifyPayment, X402ProviderError } from "@/lib/agent/x402";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -74,12 +74,13 @@ export async function POST(request: Request) {
       }
       await updateAgentRequest(effectiveId, { status: "paid" }); log("payment_verified", effectiveId, { provider: config.provider }); log("settlement_completed", effectiveId, { settlement_status: "success", provider: config.provider });
     } catch (error) {
-      log("payment_rejected", effectiveId, { reason: safeError(error) });
+      const failure = safePaymentFailure(error);
+      log("payment_rejected", effectiveId, failure);
       if (reservedReference) await updatePayment(reservedReference, { settlement_status: "failed" });
-      await updateAgentRequest(effectiveId, { status: "payment_rejected", error_code: "PAYMENT_INVALID" });
+      const settlementFailed = error instanceof X402ProviderError && error.operation === "settle";
+      await updateAgentRequest(effectiveId, { status: "payment_rejected", error_code: settlementFailed ? "PAYMENT_SETTLEMENT_FAILED" : "PAYMENT_INVALID" });
       if (error instanceof Error && error.message.startsWith("Payment storage")) return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment storage is temporarily unavailable.", 503, effectiveId);
-      const settlementFailed = error instanceof Error && error.message.startsWith("PAYMENT_SETTLEMENT_FAILED");
-      return agentError(settlementFailed ? "PAYMENT_SETTLEMENT_FAILED" : "PAYMENT_INVALID", settlementFailed ? "Payment settlement failed." : "Payment verification failed.", 402, effectiveId);
+      return agentError(settlementFailed ? "PAYMENT_SETTLEMENT_FAILED" : "PAYMENT_INVALID", settlementFailed ? "Payment settlement failed." : "Payment verification failed.", 402, effectiveId, { reason: failure.reason, reason_message: failure.reason_message });
     }
   }
   const release = acquireGenerationSlot();
@@ -103,4 +104,3 @@ export async function POST(request: Request) {
 }
 
 function log(event: string, requestId: string, data: Record<string, unknown> = {}) { securityLog(event, { request_id: requestId, route: "/api/agent/generate-sop", ...data }); }
-function safeError(error: unknown) { return error instanceof Error ? error.message.split(":")[0] : "UnknownError"; }

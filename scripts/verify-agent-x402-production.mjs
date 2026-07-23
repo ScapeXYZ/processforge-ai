@@ -32,12 +32,15 @@ let decodedChallenge;
 try { decodedChallenge = decodePaymentRequiredHeader(paymentRequiredHeader); }
 catch (error) { throw new Error(`PAYMENT-REQUIRED header could not be decoded: ${error instanceof Error ? error.message : String(error)}`); }
 const requirement = decodedChallenge?.accepts?.[0];
+assert(decodedChallenge?.x402Version === 2, `402 x402Version: expected 2, received ${JSON.stringify(decodedChallenge?.x402Version)}`);
+assert(decodedChallenge?.resource?.url === `${base}/api/agent/generate-sop`, `402 resource URL: expected ${JSON.stringify(`${base}/api/agent/generate-sop`)}, received ${JSON.stringify(decodedChallenge?.resource?.url)}`);
 assert(requirement?.scheme === "exact", `402 scheme: expected "exact", received ${JSON.stringify(requirement?.scheme)}`);
 assert(requirement?.network === "eip155:196", `402 network: expected "eip155:196", received ${JSON.stringify(requirement?.network)}`);
 assert(/^0x[a-fA-F0-9]{40}$/.test(requirement?.asset || ""), `402 asset must be an ERC-20 contract address, received ${JSON.stringify(requirement?.asset)}`);
 assert(requirement.asset.toLowerCase() === pricing.asset_address.toLowerCase(), `402 asset contract mismatch: received contract ${JSON.stringify(requirement.asset)}, received symbol ${JSON.stringify(requirement?.extra?.assetSymbol)}, expected address ${JSON.stringify(pricing.asset_address)}`);
 assert(requirement?.extra?.assetSymbol === pricing?.asset, `402 asset symbol mismatch: received symbol ${JSON.stringify(requirement?.extra?.assetSymbol)}, metadata symbol ${JSON.stringify(pricing?.asset)}, contract ${JSON.stringify(requirement?.asset)}`);
 assert(requirement?.extra?.name === "USD₮0" && requirement?.extra?.version === "1", `402 token domain mismatch: expected name "USD₮0" and version "1", received name ${JSON.stringify(requirement?.extra?.name)} and version ${JSON.stringify(requirement?.extra?.version)}`);
+assert((requirement?.extra?.assetTransferMethod ?? "eip3009") === "eip3009", `402 transfer method: expected "eip3009", received ${JSON.stringify(requirement?.extra?.assetTransferMethod)}`);
 assert(requirement?.payTo && /^0x[a-fA-F0-9]{40}$/.test(requirement.payTo), "402 recipient is missing or invalid");
 assert(requirement.payTo.toLowerCase() === (process.env.OKX_X402_PAY_TO_ADDRESS || requirement.payTo).toLowerCase(), "402 recipient does not match OKX_X402_PAY_TO_ADDRESS");
 assert(String(requirement.amount) === String(pricing?.amount) && requirement.extra?.resource === `${base}/api/agent/generate-sop`, `402 amount/resource mismatch: received amount ${JSON.stringify(requirement?.amount)}, metadata amount ${JSON.stringify(pricing?.amount)}, resource ${JSON.stringify(requirement?.extra?.resource)}`);

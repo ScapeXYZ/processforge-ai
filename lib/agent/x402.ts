@@ -28,27 +28,67 @@ export function decodePayment(header: string): PaymentPayload { return decodePay
 
 export function assertPaymentMatches(payload: PaymentPayload, expected: PaymentRequirements, resourceUrl: string, requestHash: string): void {
   const accepted = payload.accepted;
-  if (accepted.scheme !== expected.scheme || accepted.network !== expected.network || accepted.asset.toLowerCase() !== expected.asset.toLowerCase() || accepted.amount !== expected.amount || accepted.payTo.toLowerCase() !== expected.payTo.toLowerCase()) throw new Error("PAYMENT_REQUIREMENT_MISMATCH");
-  if (payload.resource?.url && payload.resource.url !== resourceUrl) throw new Error("PAYMENT_RESOURCE_MISMATCH");
-  if (accepted.extra?.resource !== resourceUrl || accepted.extra?.requestHash !== requestHash) throw new Error("PAYMENT_REQUEST_BINDING_MISMATCH");
+  if (accepted.scheme !== expected.scheme || accepted.network !== expected.network || accepted.asset.toLowerCase() !== expected.asset.toLowerCase() || accepted.amount !== expected.amount || accepted.payTo.toLowerCase() !== expected.payTo.toLowerCase()) throw new X402ProviderError("verify", "payment_requirement_mismatch");
+  if (payload.resource?.url && payload.resource.url !== resourceUrl) throw new X402ProviderError("verify", "resource_mismatch");
+  if (accepted.extra?.resource !== resourceUrl || accepted.extra?.requestHash !== requestHash) throw new X402ProviderError("verify", "resource_mismatch");
 }
 
 export function paymentReference(payload: PaymentPayload): string { return stableHash(payload); }
 
 export async function verifyPayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse> {
-  const verified = await facilitator(config).verify(payload, requirements);
-  if (!verified.isValid) throw new Error(`PAYMENT_INVALID:${verified.invalidReason ?? "verification_failed"}`);
-  return verified;
+  try {
+    const verified = await facilitator(config).verify(payload, requirements);
+    if (!verified.isValid) throw new X402ProviderError("verify", verified.invalidReason ?? "verification_failed", undefined, officialRequestId(verified.extensions));
+    return verified;
+  } catch (error) { throw normalizeProviderError("verify", error); }
 }
 
 export async function settlePayment(config: X402Config, payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
-  const settlement = await facilitator(config).settle(payload, requirements);
-  if (!settlement.success || settlement.status !== "success") throw new Error(`PAYMENT_SETTLEMENT_FAILED:${settlement.errorReason ?? settlement.status ?? "settlement_failed"}`);
-  return settlement;
+  try {
+    const settlement = await facilitator(config).settle(payload, requirements);
+    if (!settlement.success || settlement.status !== "success") throw new X402ProviderError("settle", settlement.errorReason ?? settlement.status ?? "settlement_failed", undefined, officialRequestId(settlement.extensions));
+    return settlement;
+  } catch (error) { throw normalizeProviderError("settle", error); }
 }
 
 export function paymentResponseHeader(settlement: SettleResponse): string { return encodePaymentResponseHeader(settlement); }
 
 function facilitator(config: X402Config) {
   return new OKXFacilitatorClient({ apiKey: config.apiKey, secretKey: config.secretKey, passphrase: config.passphrase, baseUrl: config.facilitatorUrl, syncSettle: true });
+}
+
+export class X402ProviderError extends Error {
+  constructor(public readonly operation: "verify" | "settle", public readonly reason: string, public readonly httpStatus?: number, public readonly providerRequestId?: string) { super(`X402_${operation.toUpperCase()}_FAILED`); this.name = "X402ProviderError"; }
+}
+
+export function safePaymentFailure(error: unknown) {
+  const normalized = error instanceof X402ProviderError ? error : normalizeProviderError("verify", error);
+  return { operation: normalized.operation, reason: safeReason(normalized.reason), reason_message: paymentReasonMessage(normalized.reason), ...(normalized.httpStatus ? { facilitator_http_status: normalized.httpStatus } : {}), ...(normalized.providerRequestId ? { facilitator_request_id: normalized.providerRequestId } : {}) };
+}
+
+function normalizeProviderError(operation: "verify" | "settle", error: unknown): X402ProviderError {
+  if (error instanceof X402ProviderError) return error;
+  const candidate = error as { invalidReason?: unknown; errorReason?: unknown; statusCode?: unknown; message?: unknown };
+  const statusFromMessage = typeof candidate?.message === "string" ? /OKX (?:verify|settle) failed: (\d{3})/.exec(candidate.message)?.[1] : undefined;
+  const status = typeof candidate?.statusCode === "number" ? candidate.statusCode : statusFromMessage ? Number(statusFromMessage) : undefined;
+  const supplied = operation === "verify" ? candidate?.invalidReason : candidate?.errorReason;
+  const reason = typeof supplied === "string" && supplied ? supplied : status ? `facilitator_http_${status}` : "facilitator_unavailable";
+  return new X402ProviderError(operation, reason, status);
+}
+
+function officialRequestId(extensions?: Record<string, unknown>): string | undefined {
+  const value = extensions?.requestId ?? extensions?.request_id ?? extensions?.traceId;
+  return typeof value === "string" && /^[a-zA-Z0-9._:-]{1,128}$/.test(value) ? value : undefined;
+}
+
+function safeReason(reason: string): string { return /^[a-zA-Z0-9 _.:/-]{1,160}$/.test(reason) ? reason : "verification_failed"; }
+function paymentReasonMessage(reason: string): string {
+  const key = reason.toLowerCase().replace(/[ -]+/g, "_");
+  const messages: Record<string, string> = {
+    insufficient_funds: "The buyer wallet has insufficient token funds.", nonce_already_used: "The payment authorization nonce was already used.", invalid_signature: "The payment signature is invalid.",
+    resource_mismatch: "The signed resource does not match this endpoint.", no_matching_payment_option: "The buyer payload does not match an advertised payment option.", payer_blocked: "The facilitator blocked the payer.",
+    risk_address: "The facilitator rejected the payer address for risk controls.", unsupported_chain: "The facilitator does not support the requested chain.", authorization_expired: "The payment authorization has expired.", authorization_not_yet_valid: "The payment authorization is not yet valid.",
+    payment_requirement_mismatch: "The signed payment terms do not match the server requirement.",
+  };
+  return messages[key] ?? "The facilitator rejected the payment proof.";
 }

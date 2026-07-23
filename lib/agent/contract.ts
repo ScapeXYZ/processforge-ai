@@ -23,6 +23,6 @@ export type AgentErrorCode =
   | "PAYMENT_SETTLEMENT_FAILED" | "IDEMPOTENCY_CONFLICT" | "REQUEST_IN_PROGRESS"
   | "RATE_LIMITED" | "SERVICE_BUSY" | "AI_TIMEOUT" | "GENERATION_FAILED";
 
-export function agentError(code: AgentErrorCode, message: string, status: number, requestId?: string) {
-  return Response.json({ error: { code, message, request_id: requestId ?? null } }, { status });
+export function agentError(code: AgentErrorCode, message: string, status: number, requestId?: string, diagnostics?: { reason?: string; reason_message?: string }) {
+  return Response.json({ error: { code, message, ...(diagnostics?.reason ? { reason: diagnostics.reason } : {}), ...(diagnostics?.reason_message ? { reason_message: diagnostics.reason_message } : {}), request_id: requestId ?? null } }, { status });
 }
