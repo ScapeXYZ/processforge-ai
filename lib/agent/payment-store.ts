@@ -40,14 +40,28 @@ export async function paymentFingerprintExists(fingerprint: string): Promise<boo
   const { data, error } = await database()
     .from("agent_payments")
     .select("id")
-    .eq("replay_fingerprint", fingerprint)
+    .eq("payment_reference", fingerprint)
     .maybeSingle();
   if (error) throw new Error(`PAYMENT_REPLAY_LOOKUP_${error.code}`);
   return Boolean(data);
 }
 
 export async function persistSettledPayment(row: Record<string, unknown>): Promise<void> {
-  const { error } = await database().from("agent_payments").insert(row);
+  const paymentRow = {
+    request_id: row.request_id,
+    payment_reference: row.payment_reference,
+    transaction_hash: row.transaction_hash ?? row.settlement_reference,
+    payer_address: row.payer_address,
+    recipient_address: row.recipient_address,
+    network: row.network,
+    asset: row.asset,
+    amount: row.amount,
+    verification_status: row.verification_status,
+    settlement_status: row.settlement_status,
+    verified_at: row.verified_at,
+    settled_at: row.settled_at,
+  };
+  const { error } = await database().from("agent_payments").insert(paymentRow);
   if (error?.code === "23505") throw new Error("PAYMENT_REPLAYED");
   if (error) throw new Error(`PAYMENT_EVIDENCE_INSERT_${error.code}`);
 }
