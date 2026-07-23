@@ -10,6 +10,7 @@ const schema = z.object({
   OKX_X402_ENABLED: z.enum(["true", "false"]).default("false"), OKX_X402_MOCK: z.enum(["true", "false"]).default("false"), OKX_X402_NETWORK: z.string().optional(),
   OKX_X402_PAY_TO_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(), OKX_X402_ASSET: z.string().optional(), OKX_X402_ASSET_ADDRESS: z.string().regex(/^0x[a-fA-F0-9]{40}$/).optional(), OKX_X402_ASSET_DECIMALS: z.coerce.number().int().min(0).max(255).optional(), OKX_X402_PRICE: z.string().regex(/^\d+$/).optional(), OKX_X402_FACILITATOR_URL: z.string().url().optional(),
   OKX_X402_API_KEY: z.string().optional(), OKX_X402_SECRET_KEY: z.string().optional(), OKX_X402_PASSPHRASE: z.string().optional(),
+  OKX_X402_ALLOW_TESTNET_IN_PRODUCTION: z.enum(["YES", "NO"]).default("NO"),
 });
 
 export function inspectServerEnvironment(): { ready: boolean; errors: string[] } {
@@ -23,7 +24,8 @@ export function inspectServerEnvironment(): { ready: boolean; errors: string[] }
   if (parsed.data.OKX_X402_MOCK !== "false") errors.push("OKX_X402_MOCK must be false in production");
   if (parsed.data.AGENT_PAID_GENERATION_ENABLED === "true") {
     if (parsed.data.OKX_X402_ENABLED !== "true") errors.push("OKX_X402_ENABLED must be true when paid generation is enabled");
-    if (parsed.data.OKX_X402_NETWORK !== "eip155:196") errors.push("Production x402 network must be eip155:196");
+    if (!["eip155:196", "eip155:1952"].includes(parsed.data.OKX_X402_NETWORK ?? "")) errors.push("Official x402 network must be eip155:196 or eip155:1952");
+    if (parsed.data.OKX_X402_NETWORK === "eip155:1952" && parsed.data.OKX_X402_ALLOW_TESTNET_IN_PRODUCTION !== "YES") errors.push("Production testnet mode requires OKX_X402_ALLOW_TESTNET_IN_PRODUCTION=YES");
     for (const key of ["OKX_X402_PAY_TO_ADDRESS", "OKX_X402_ASSET", "OKX_X402_ASSET_ADDRESS", "OKX_X402_ASSET_DECIMALS", "OKX_X402_PRICE", "OKX_X402_FACILITATOR_URL", "OKX_X402_API_KEY", "OKX_X402_SECRET_KEY", "OKX_X402_PASSPHRASE"] as const) {
       if (parsed.data[key] === undefined || parsed.data[key] === "") errors.push(`Missing required x402 variable: ${key}`);
     }

@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomUUID } from "node:crypto";
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
-import type { PaymentPayload } from "@okxweb3/x402-core/types";
+import type { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { paymentProxy } from "@okxweb3/x402-next";
 import { NextResponse, type NextRequest } from "next/server";
@@ -13,8 +13,7 @@ import {
   createAgentRequest,
   findAgentRequest,
   paymentFingerprintExists,
-  persistSettlement,
-  persistVerifiedPayment,
+  persistSettledPayment,
   updateAgentRequest,
   type AgentRequestRecord,
 } from "@/lib/agent/payment-store";
@@ -26,9 +25,12 @@ type PaymentRequestContext = ValidAgentRequest & {
   requestId: string;
   record: AgentRequestRecord;
   paymentReference?: string;
+  verifiedPayer?: string;
+  verifiedRequirements?: PaymentRequirements;
 };
 
 const requestContext = new AsyncLocalStorage<PaymentRequestContext>();
+const pendingFingerprints = new Set<string>();
 let cachedProxy: ((request: NextRequest) => Promise<NextResponse>) | undefined;
 
 export async function runOfficialPaymentMiddleware(request: NextRequest): Promise<NextResponse | null> {
@@ -41,6 +43,9 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
 
   const prepared = await prepareRequest(request, config);
   if (prepared instanceof NextResponse) return prepared;
+  if (prepared.record.error_code === "PAYMENT_PERSISTENCE_FAILED") {
+    return jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", prepared.requestId);
+  }
   if (["paid", "processing", "completed"].includes(prepared.record.status)) return null;
   const proxy = cachedProxy ??= createOfficialProxy();
   return requestContext.run(prepared, () => proxy(request));
@@ -100,7 +105,7 @@ function createOfficialProxy() {
   server.onBeforeVerify(async ({ paymentPayload }) => {
     const context = requiredContext();
     const fingerprint = paymentFingerprint(paymentPayload);
-    if (await paymentFingerprintExists(fingerprint)) {
+    if (pendingFingerprints.has(fingerprint) || await paymentFingerprintExists(fingerprint)) {
       return { abort: true, reason: "PAYMENT_REPLAYED", message: "This payment proof has already been consumed." };
     }
     context.paymentReference = fingerprint;
@@ -108,48 +113,71 @@ function createOfficialProxy() {
   server.onAfterVerify(async ({ paymentPayload, requirements, result }) => {
     const context = requiredContext();
     const reference = context.paymentReference ?? paymentFingerprint(paymentPayload);
-    await persistVerifiedPayment({
-      request_id: context.requestId,
-      payment_reference: reference,
-      replay_fingerprint: reference,
-      recipient_address: requirements.payTo,
-      network: requirements.network,
-      asset: requirements.asset,
-      amount: requirements.amount,
-      payer_address: result.payer ?? null,
-      verification_status: "verified",
-      settlement_status: "pending",
-      verified_at: new Date().toISOString(),
-    });
-    await updateAgentRequest(context.requestId, { status: "settling" });
-    securityLog("payment_verified", {
-      request_id: context.requestId,
-      provider: config.provider,
-      network: requirements.network,
-    });
+    if (pendingFingerprints.has(reference)) throw new Error("PAYMENT_REPLAYED");
+    pendingFingerprints.add(reference);
+    context.paymentReference = reference;
+    context.verifiedPayer = result.payer;
+    context.verifiedRequirements = requirements;
+    try {
+      await updateAgentRequest(context.requestId, { status: "settling", error_code: null });
+    } catch (error) {
+      pendingFingerprints.delete(reference);
+      throw error;
+    }
   });
   server.onAfterSettle(async ({ result }) => {
     const context = requiredContext();
-    if (!context.paymentReference || !result.transaction || (result.status && result.status !== "success")) {
+    const requirements = context.verifiedRequirements;
+    if (!context.paymentReference || !requirements || !result.transaction || (result.status && result.status !== "success")) {
       throw new Error("SETTLEMENT_NOT_FINAL");
     }
-    await persistSettlement(context.paymentReference, result.transaction, {
-      transaction_hash: result.transaction,
-      payer_address: result.payer ?? null,
-      settlement_status: "settled",
-      settled_at: new Date().toISOString(),
-    });
-    await updateAgentRequest(context.requestId, { status: "paid" });
-    securityLog("settlement_completed", {
-      request_id: context.requestId,
-      provider: config.provider,
-      network: result.network,
-      settlement_reference: result.transaction,
-    });
+    try {
+      const settledAt = new Date().toISOString();
+      await persistSettledPayment({
+        request_id: context.requestId,
+        payment_reference: context.paymentReference,
+        replay_fingerprint: context.paymentReference,
+        settlement_reference: result.transaction,
+        transaction_hash: result.transaction,
+        payer_address: result.payer ?? context.verifiedPayer ?? null,
+        recipient_address: requirements.payTo,
+        network: requirements.network,
+        asset: requirements.asset,
+        amount: requirements.amount,
+        verification_status: "verified",
+        settlement_status: "settled",
+        verified_at: settledAt,
+        settled_at: settledAt,
+      });
+      await updateAgentRequest(context.requestId, { status: "paid", error_code: null });
+      securityLog("settlement_completed", {
+        request_id: context.requestId,
+        provider: config.provider,
+        network: result.network,
+        settlement_reference: result.transaction,
+      });
+    } catch (error) {
+      try {
+        await updateAgentRequest(context.requestId, {
+          status: "payment_rejected",
+          error_code: "PAYMENT_PERSISTENCE_FAILED",
+        });
+      } catch {
+        // Facilitator settlement remains successful even if both persistence writes fail.
+      }
+      securityLog("payment_persistence_failed", {
+        request_id: context.requestId,
+        provider: config.provider,
+        error_name: error instanceof Error ? error.message.split("_").slice(0, 3).join("_") : "UnknownError",
+      });
+    } finally {
+      pendingFingerprints.delete(context.paymentReference);
+    }
   });
   server.onSettleFailure(async () => {
     const context = requestContext.getStore();
     if (context) {
+      if (context.paymentReference) pendingFingerprints.delete(context.paymentReference);
       await updateAgentRequest(context.requestId, {
         status: "payment_rejected",
         error_code: "PAYMENT_SETTLEMENT_FAILED",
@@ -168,7 +196,7 @@ function createOfficialProxy() {
         price: {
           asset: config.assetAddress,
           amount: config.amount,
-          extra: { name: "USD₮0", version: "1" },
+          extra: { name: config.assetName, version: config.assetVersion },
         },
         maxTimeoutSeconds: config.maxTimeoutSeconds,
       },

@@ -64,6 +64,9 @@ export async function POST(request: Request) {
       headers: { "x-idempotent-replay": "true", "cache-control": "no-store" },
     });
   }
+  if (stored.error_code === "PAYMENT_PERSISTENCE_FAILED") {
+    return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", 503, stored.id);
+  }
   if (stored.status !== "paid") {
     return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, stored.id);
   }

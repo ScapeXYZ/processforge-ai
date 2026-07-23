@@ -1,8 +1,23 @@
 import "server-only";
 
 const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
-const XLAYER_NETWORK = "eip155:196";
-const XLAYER_USDT0 = "0x779ded0c9e1022225f8e0630b35a9b54be713736";
+const XLAYER_ASSETS = {
+  "eip155:196": {
+    address: "0x779ded0c9e1022225f8e0630b35a9b54be713736",
+    decimals: 6,
+    name: "USD₮0",
+    version: "1",
+    mode: "mainnet",
+  },
+  "eip155:1952": {
+    address: "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c",
+    decimals: 6,
+    name: "USD₮0",
+    version: "1",
+    mode: "testnet",
+  },
+} as const;
+type SupportedNetwork = keyof typeof XLAYER_ASSETS;
 
 export type OfficialPaymentConfig = {
   requested: boolean;
@@ -10,10 +25,13 @@ export type OfficialPaymentConfig = {
   ready: boolean;
   errors: string[];
   provider: "okx-official";
-  network: `eip155:${number}`;
+  mode: "mainnet" | "testnet" | "invalid";
+  network: SupportedNetwork | `eip155:${number}`;
   asset: string;
   assetAddress: string;
   assetDecimals: number;
+  assetName: string;
+  assetVersion: string;
   amount: string;
   payTo: string;
   maxTimeoutSeconds: number;
@@ -29,16 +47,21 @@ export function getOfficialPaymentConfig(): OfficialPaymentConfig {
   const enabled = process.env.AGENT_PAID_GENERATION_ENABLED === "true"
     && process.env.OKX_X402_ENABLED === "true"
     && process.env.OKX_X402_MOCK === "false";
+  const network = (process.env.OKX_X402_NETWORK?.trim() || "eip155:196") as `eip155:${number}`;
+  const expectedAsset = XLAYER_ASSETS[network as SupportedNetwork];
   const config: OfficialPaymentConfig = {
     requested,
     enabled,
     ready: false,
     errors: [],
     provider: "okx-official",
-    network: (process.env.OKX_X402_NETWORK?.trim() || XLAYER_NETWORK) as `eip155:${number}`,
+    mode: expectedAsset?.mode ?? "invalid",
+    network,
     asset: process.env.OKX_X402_ASSET?.trim().toUpperCase() || "",
     assetAddress: process.env.OKX_X402_ASSET_ADDRESS?.trim() || "",
     assetDecimals: Number(process.env.OKX_X402_ASSET_DECIMALS),
+    assetName: expectedAsset?.name ?? "",
+    assetVersion: expectedAsset?.version ?? "",
     amount: process.env.OKX_X402_PRICE?.trim() || "",
     payTo: process.env.OKX_X402_PAY_TO_ADDRESS?.trim() || "",
     maxTimeoutSeconds: Number(process.env.OKX_X402_TIMEOUT_SECONDS || 120),
@@ -50,13 +73,16 @@ export function getOfficialPaymentConfig(): OfficialPaymentConfig {
 
   if (requested && !enabled) config.errors.push("payment flags must enable official payments together and keep mock disabled");
   if (enabled) {
-    if (config.network !== XLAYER_NETWORK) config.errors.push("official payments require eip155:196");
-    if (config.asset !== "USDT") config.errors.push("official payments require the configured X Layer USDT symbol");
+    if (!expectedAsset) config.errors.push("official payments require eip155:196 or eip155:1952");
+    if (config.asset !== "USDT") config.errors.push("official payments require the X Layer USD₮0 symbol USDT");
     if (!EVM_ADDRESS.test(config.assetAddress)
-      || config.assetAddress.toLowerCase() !== XLAYER_USDT0) {
-      config.errors.push("official payments require the approved X Layer USDT0 contract");
+      || !expectedAsset
+      || config.assetAddress.toLowerCase() !== expectedAsset.address) {
+      config.errors.push("asset address does not match the selected X Layer network");
     }
-    if (config.assetDecimals !== 6) config.errors.push("X Layer USDT0 requires 6 decimals");
+    if (!expectedAsset || config.assetDecimals !== expectedAsset.decimals) {
+      config.errors.push("asset decimals do not match the selected X Layer network");
+    }
     if (!/^\d+$/.test(config.amount) || BigInt(config.amount || "0") <= BigInt(0)) {
       config.errors.push("price must be a positive atomic-unit integer");
     }
@@ -79,6 +105,23 @@ export function getOfficialPaymentConfig(): OfficialPaymentConfig {
     }
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
       config.errors.push("durable payment storage is missing");
+    }
+    const productionHost = (() => {
+      try {
+        return new URL(process.env.APP_BASE_URL || "http://localhost").hostname;
+      } catch {
+        return "";
+      }
+    })();
+    const deployedProduction = process.env.NODE_ENV === "production"
+      && (process.env.ENABLE_RELEASE_CHECK === "true"
+        || process.env.VERCEL_ENV === "production"
+        || process.env.RENDER === "true"
+        || productionHost === "processforgeai.xyz");
+    if (deployedProduction
+      && config.mode === "testnet"
+      && process.env.OKX_X402_ALLOW_TESTNET_IN_PRODUCTION !== "YES") {
+      config.errors.push("deployed production requires explicit testnet authorization");
     }
   }
 

@@ -29,6 +29,7 @@ function buildPricingMetadata(payment: AgentPaymentStatus, origin: string) {
     asset_address: payment.assetAddress,
     asset_decimals: payment.assetDecimals,
     network: payment.network,
+    pay_to: payment.payTo,
     paid_endpoint: `${origin}/api/agent/generate-sop`,
   };
 }
