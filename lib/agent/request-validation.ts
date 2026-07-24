@@ -6,7 +6,6 @@ const MAX_BODY_BYTES = 32_768;
 export type ValidAgentRequest = {
   ok: true;
   input: AgentSopRequest;
-  idempotencyKey: string;
   requestHash: string;
 };
 
@@ -19,10 +18,6 @@ export type InvalidAgentRequest = {
 };
 
 export async function validateAgentRequest(request: Request): Promise<ValidAgentRequest | InvalidAgentRequest> {
-  const idempotencyKey = request.headers.get("idempotency-key")?.trim();
-  if (!idempotencyKey || idempotencyKey.length < 8 || idempotencyKey.length > 200) {
-    return { ok: false, status: 400, code: "INVALID_REQUEST", message: "A valid Idempotency-Key header (8-200 characters) is required." };
-  }
   const declaredLength = Number(request.headers.get("content-length") || 0);
   if (declaredLength > MAX_BODY_BYTES) {
     return { ok: false, status: 413, code: "INVALID_REQUEST", message: "Request body is too large." };
@@ -55,6 +50,6 @@ export async function validateAgentRequest(request: Request): Promise<ValidAgent
       })),
     };
   }
-  const requestHash = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
-  return { ok: true, input: parsed.data, idempotencyKey, requestHash };
+  const requestHash = createHash("sha256").update(raw).digest("hex");
+  return { ok: true, input: parsed.data, requestHash };
 }

@@ -30,8 +30,7 @@ const body = {
   audience: "Operations team",
   output_format: "json",
 };
-const idempotencyKey = `testnet-paid-${crypto.randomUUID()}`;
-const headers = { "content-type": "application/json", "idempotency-key": idempotencyKey };
+const headers = { "content-type": "application/json" };
 const unpaid = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
 if (unpaid.status !== 402) throw new Error(`Expected initial HTTP 402, received ${unpaid.status}.`);
 const encoded = unpaid.headers.get("payment-required");
@@ -84,7 +83,21 @@ if (process.env.CONFIRM_TESTNET_X402_PAYMENT !== "YES") {
 
 const signer = toClientEvmSigner(account, publicClient);
 const client = new x402Client().register(NETWORK, new ExactEvmScheme(signer));
-const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+let replayHeaders = null;
+const recordingFetch = async (input, init) => {
+  const outgoing = new Request(input, init);
+  const paymentSignature = outgoing.headers.get("payment-signature");
+  const xPayment = outgoing.headers.get("x-payment");
+  if (paymentSignature || xPayment) {
+    replayHeaders = {
+      "content-type": "application/json",
+      ...(paymentSignature ? { "payment-signature": paymentSignature } : {}),
+      ...(xPayment ? { "x-payment": xPayment } : {}),
+    };
+  }
+  return fetch(input, init);
+};
+const fetchWithPayment = wrapFetchWithPayment(recordingFetch, client);
 const paid = await fetchWithPayment(endpoint, {
   method: "POST",
   headers,
@@ -99,7 +112,8 @@ if (!paymentResponse) throw new Error("Successful paid response did not include 
 const settlement = decodePaymentResponseHeader(paymentResponse);
 if (!settlement?.transaction) throw new Error("Successful paid response did not include a settlement reference.");
 
-const idempotent = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(body) });
+if (!replayHeaders) throw new Error("The official client did not emit a standard payment header.");
+const idempotent = await fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) });
 const idempotentBody = await idempotent.json().catch(() => null);
 if (idempotent.status !== 200
   || idempotentBody?.request_id !== result.request_id
@@ -108,11 +122,11 @@ if (idempotent.status !== 200
 }
 const conflict = await fetch(endpoint, {
   method: "POST",
-  headers,
+  headers: replayHeaders,
   body: JSON.stringify({ ...body, description: `${body.description} Changed content.` }),
 });
 const conflictBody = await conflict.json().catch(() => null);
-if (conflict.status !== 409 || conflictBody?.error?.code !== "IDEMPOTENCY_CONFLICT") {
+if (conflict.status !== 409 || conflictBody?.error?.code !== "PAYMENT_REPLAY_CONFLICT") {
   throw new Error("Changed-body idempotency conflict verification failed.");
 }
 console.log(JSON.stringify({

@@ -1,6 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
 import type { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
@@ -10,22 +10,17 @@ import { getAppBaseUrl } from "@/lib/env/server";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
 import {
-  createAgentRequest,
-  findAgentPayment,
-  findAgentRequest,
-  paymentFingerprintExists,
-  reserveVerifiedPayment,
+  reserveVerifiedPaymentAtomic,
   updatePaymentSettlement,
   updateAgentRequest,
-  type AgentRequestRecord,
 } from "@/lib/agent/payment-store";
-import { validateAgentRequest } from "@/lib/agent/request-validation";
+import { INTERNAL_PAYMENT_KEY_HEADER } from "@/lib/agent/payment-internal";
 import { AGENT_SERVICE } from "@/lib/agent/service";
 import { securityLog } from "@/lib/security/logger";
 
 type PaymentRequestContext = {
   requestId: string | null;
-  record: AgentRequestRecord | null;
+  requestHash: string | null;
   paymentSignaturePresent: boolean;
   xPaymentHeaderPresent: boolean;
   middlewareResult: "challenge" | "verified" | "settled" | "rejected";
@@ -34,16 +29,12 @@ type PaymentRequestContext = {
   paymentReference?: string;
   verifiedPayer?: string;
   verifiedRequirements?: PaymentRequirements;
-};
-
-type PreparedPaymentRequestContext = PaymentRequestContext & {
-  requestId: string;
-  record: AgentRequestRecord;
+  replayDecision?: "new" | "completed" | "busy" | "resume" | "conflict";
+  storedResponse?: Record<string, unknown> | null;
 };
 
 const PAYMENT_ROUTE = "/api/agent/generate-sop";
 const requestContext = new AsyncLocalStorage<PaymentRequestContext>();
-const pendingFingerprints = new Set<string>();
 let cachedProxy: ((request: NextRequest) => Promise<NextResponse>) | undefined;
 
 export async function runOfficialPaymentMiddleware(request: NextRequest): Promise<NextResponse | null> {
@@ -65,7 +56,7 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
   if (!paymentSignaturePresent && !xPaymentHeaderPresent) {
     const challengeContext: PaymentRequestContext = {
       requestId: null,
-      record: null,
+      requestHash: null,
       paymentSignaturePresent,
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
@@ -75,83 +66,49 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
     return response;
   }
 
-  const prepared = await prepareRequest(request, config);
-  if (prepared instanceof NextResponse) return prepared;
-  if (prepared.record.error_code === "PAYMENT_PERSISTENCE_FAILED") {
-    return jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", prepared.requestId);
-  }
-  const existingPayment = await findAgentPayment(prepared.requestId);
-  if (existingPayment?.settlement_status === "settled") {
-    await updateAgentRequest(prepared.requestId, { status: "paid", error_code: null });
-    return null;
-  }
-  if (existingPayment && ["pending", "unknown"].includes(existingPayment.settlement_status)) {
-    return jsonError(
-      409,
-      "PAYMENT_SETTLEMENT_PENDING",
-      "A payment for this request is pending reconciliation. No new payment authorization will be issued.",
-      prepared.requestId,
-    );
-  }
-  if (prepared.record.status === "settling" || prepared.record.error_code === "PAYMENT_SETTLEMENT_UNKNOWN") {
-    return jsonError(
-      409,
-      "PAYMENT_SETTLEMENT_PENDING",
-      "Settlement status is unknown. Reconcile the existing payment before retrying.",
-      prepared.requestId,
-    );
-  }
-  if (["paid", "processing", "completed"].includes(prepared.record.status)) return null;
-  const response = await requestContext.run(prepared, () => proxy(request));
-  if (response.status === 402 && (prepared.paymentSignaturePresent || prepared.xPaymentHeaderPresent)) {
-    prepared.middlewareResult = "rejected";
-  }
-  logMiddlewareResult(prepared, response.status);
-  return response;
-}
-
-async function prepareRequest(
-  request: NextRequest,
-  config: ReturnType<typeof getOfficialPaymentConfig>,
-): Promise<PreparedPaymentRequestContext | NextResponse> {
-  const validated = await validateAgentRequest(request.clone());
-  if (!validated.ok) {
-    return NextResponse.json({
-      error: {
-        code: validated.code,
-        message: validated.message,
-        ...(validated.details ? { details: validated.details } : {}),
-        request_id: null,
-      },
-    }, { status: validated.status });
-  }
-
-  let record = await findAgentRequest(validated.idempotencyKey);
-  if (record && record.request_hash !== validated.requestHash) {
-    return jsonError(409, "IDEMPOTENCY_CONFLICT", "This Idempotency-Key was already used with different request content.", record.id);
-  }
-  if (!record) {
-    const requestId = randomUUID();
-    await createAgentRequest({
-      id: requestId,
-      service: AGENT_SERVICE,
-      idempotency_key: validated.idempotencyKey,
-      request_hash: validated.requestHash,
-      status: "payment_required",
-      network: config.network,
-      price: config.amount,
-      asset: config.assetAddress,
-    });
-    record = await findAgentRequest(validated.idempotencyKey);
-    if (!record) throw new Error("AGENT_REQUEST_NOT_DURABLE");
-  }
-  return {
-    requestId: record.id,
-    record,
-    paymentSignaturePresent: request.headers.has("payment-signature"),
-    xPaymentHeaderPresent: request.headers.has("x-payment"),
+  const paidContext: PaymentRequestContext = {
+    requestId: null,
+    requestHash: await requestBodyHash(request.clone()),
+    paymentSignaturePresent,
+    xPaymentHeaderPresent,
     middlewareResult: "challenge",
   };
+  const response = await requestContext.run(paidContext, () => proxy(request));
+
+  if (paidContext.replayDecision === "completed" && paidContext.storedResponse) {
+    logMiddlewareResult(paidContext, 200);
+    return NextResponse.json(paidContext.storedResponse, {
+      headers: { "cache-control": "no-store", "x-idempotent-replay": "true" },
+    });
+  }
+  if (paidContext.replayDecision === "conflict") {
+    return jsonError(
+      409,
+      "PAYMENT_REPLAY_CONFLICT",
+      "This verified payment authorization is already associated with different request content.",
+      paidContext.requestId,
+    );
+  }
+  if (paidContext.replayDecision === "busy") {
+    return jsonError(
+      409,
+      "REQUEST_IN_PROGRESS",
+      "This verified payment is already settling or processing. Retry the same request later.",
+      paidContext.requestId,
+    );
+  }
+  if (
+    paidContext.paymentReference
+    && (paidContext.replayDecision === "resume" || paidContext.middlewareResult === "settled")
+  ) {
+    logMiddlewareResult(paidContext, 200);
+    return continueWithVerifiedPayment(request, paidContext.paymentReference, response);
+  }
+  if (response.status === 402) {
+    paidContext.middlewareResult = "rejected";
+  }
+  logMiddlewareResult(paidContext, response.status);
+  return response;
 }
 
 function createOfficialProxy() {
@@ -167,45 +124,57 @@ function createOfficialProxy() {
   const server = new x402ResourceServer(facilitator)
     .register(config.network, new ExactEvmScheme());
 
-  server.onBeforeVerify(async ({ paymentPayload }) => {
-    const context = requiredPaidContext();
-    const fingerprint = paymentFingerprint(paymentPayload);
-    if (pendingFingerprints.has(fingerprint) || await paymentFingerprintExists(fingerprint)) {
-      return { abort: true, reason: "PAYMENT_REPLAYED", message: "This payment proof has already been consumed." };
-    }
-    context.paymentReference = fingerprint;
-  });
   server.onAfterVerify(async ({ paymentPayload, requirements, result }) => {
-    const context = requiredPaidContext();
-    const reference = context.paymentReference ?? paymentFingerprint(paymentPayload);
-    if (pendingFingerprints.has(reference)) throw new Error("PAYMENT_REPLAYED");
-    pendingFingerprints.add(reference);
+    const context = requiredPaymentContext();
+    if (!result.isValid || !result.payer || !context.requestHash) {
+      throw new Error("VERIFIED_PAYMENT_IDENTITY_MISSING");
+    }
+    const reference = verifiedPaymentReplayKey(paymentPayload, requirements, result.payer);
+    const reservation = await reserveVerifiedPaymentAtomic({
+      replay_key: reference,
+      request_hash: context.requestHash,
+      service: AGENT_SERVICE,
+      network: requirements.network,
+      price: requirements.amount,
+      asset: requirements.asset,
+      payer_address: result.payer,
+      recipient_address: requirements.payTo,
+      amount: requirements.amount,
+    });
+    context.requestId = reservation.request_id;
     context.paymentReference = reference;
     context.verifiedPayer = result.payer;
     context.verifiedRequirements = requirements;
     context.middlewareResult = "verified";
-    try {
-      await updateAgentRequest(context.requestId, { status: "settling", error_code: null });
-      await reserveVerifiedPayment({
-        request_id: context.requestId,
-        payment_reference: reference,
-        payer_address: result.payer ?? null,
-        recipient_address: requirements.payTo,
-        network: requirements.network,
-        asset: requirements.asset,
-        amount: requirements.amount,
-        verification_status: "verified",
-        settlement_status: "pending",
-        verified_at: new Date().toISOString(),
-        settled_at: null,
-      });
-    } catch (error) {
-      pendingFingerprints.delete(reference);
-      throw error;
+
+    if (!reservation.hash_matches) {
+      context.replayDecision = "conflict";
+    } else if (reservation.is_new) {
+      context.replayDecision = "new";
+    } else if (reservation.request_status === "completed" && reservation.response_payload) {
+      context.replayDecision = "completed";
+      context.storedResponse = reservation.response_payload;
+    } else if (
+      reservation.settlement_status === "settled"
+      && ["paid", "failed"].includes(reservation.request_status)
+    ) {
+      context.replayDecision = "resume";
+    } else {
+      context.replayDecision = "busy";
+    }
+  });
+  server.onBeforeSettle(async () => {
+    const context = requiredPaymentContext();
+    if (context.replayDecision && context.replayDecision !== "new") {
+      return {
+        abort: true,
+        reason: "PAYMENT_ALREADY_RESERVED",
+        message: "This verified payment authorization is already reserved.",
+      };
     }
   });
   server.onAfterSettle(async ({ result }) => {
-    const context = requiredPaidContext();
+    const context = requiredReservedContext();
     const requirements = context.verifiedRequirements;
     if (!context.paymentReference || !requirements) throw new Error("SETTLEMENT_CONTEXT_MISSING");
     const settlementStatus =
@@ -249,8 +218,6 @@ function createOfficialProxy() {
         provider: config.provider,
         error_name: error instanceof Error ? error.message.split("_").slice(0, 3).join("_") : "UnknownError",
       });
-    } finally {
-      pendingFingerprints.delete(context.paymentReference);
     }
   });
   server.onVerifyFailure(async ({ error }) => {
@@ -264,12 +231,12 @@ function createOfficialProxy() {
   });
   server.onSettleFailure(async ({ error }) => {
     const context = requestContext.getStore();
-    if (context?.requestId && context.record) {
+    if (context?.replayDecision && context.replayDecision !== "new") return;
+    if (context?.requestId) {
       const safeError = safeOfficialError(error);
       context.middlewareResult = "rejected";
       context.officialErrorCode = safeError.code;
       context.officialErrorMessage = safeError.message;
-      if (context.paymentReference) pendingFingerprints.delete(context.paymentReference);
       try {
         await updatePaymentSettlement(context.requestId, { settlement_status: "unknown" });
         await updateAgentRequest(context.requestId, {
@@ -324,14 +291,66 @@ function createOfficialProxy() {
   }, server, undefined, undefined, true);
 }
 
-function paymentFingerprint(paymentPayload: PaymentPayload): string {
-  return createHash("sha256").update(JSON.stringify(paymentPayload)).digest("hex");
+function verifiedPaymentReplayKey(
+  paymentPayload: PaymentPayload,
+  requirements: PaymentRequirements,
+  verifiedPayer: string,
+): string {
+  const authorization = asRecord(paymentPayload.payload.authorization);
+  const permit2Authorization = asRecord(paymentPayload.payload.permit2Authorization);
+  const nonce = authorization?.nonce ?? permit2Authorization?.nonce;
+  if (typeof nonce !== "string" || nonce.length === 0) {
+    throw new Error("VERIFIED_PAYMENT_NONCE_MISSING");
+  }
+  const identity = {
+    x402Version: paymentPayload.x402Version,
+    scheme: requirements.scheme,
+    network: requirements.network,
+    asset: requirements.asset,
+    amount: requirements.amount,
+    payTo: requirements.payTo.toLowerCase(),
+    payer: verifiedPayer.toLowerCase(),
+    resource: `${getAppBaseUrl()}${PAYMENT_ROUTE}`,
+    nonce,
+  };
+  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
 }
 
-function requiredPaidContext(): PreparedPaymentRequestContext {
+function requiredPaymentContext(): PaymentRequestContext {
   const context = requestContext.getStore();
-  if (!context?.requestId || !context.record) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
-  return { ...context, requestId: context.requestId, record: context.record };
+  if (!context) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
+  return context;
+}
+
+function requiredReservedContext(): PaymentRequestContext & { requestId: string; paymentReference: string } {
+  const context = requiredPaymentContext();
+  if (!context.requestId || !context.paymentReference) throw new Error("PAYMENT_RESERVATION_CONTEXT_MISSING");
+  return { ...context, requestId: context.requestId, paymentReference: context.paymentReference };
+}
+
+async function requestBodyHash(request: Request): Promise<string> {
+  try {
+    return createHash("sha256").update(await request.text()).digest("hex");
+  } catch {
+    return createHash("sha256").update("UNREADABLE_REQUEST_BODY").digest("hex");
+  }
+}
+
+function continueWithVerifiedPayment(
+  request: NextRequest,
+  replayKey: string,
+  paymentResponse: NextResponse,
+): NextResponse {
+  const headers = new Headers(request.headers);
+  headers.set(INTERNAL_PAYMENT_KEY_HEADER, replayKey);
+  const next = NextResponse.next({ request: { headers } });
+  const settlementReceipt = paymentResponse.headers.get("payment-response");
+  if (settlementReceipt) next.headers.set("payment-response", settlementReceipt);
+  return next;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
 function safeOfficialError(error: unknown): { code: string; message: string } {

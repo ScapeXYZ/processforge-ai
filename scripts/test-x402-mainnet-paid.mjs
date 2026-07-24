@@ -31,8 +31,7 @@ const body = {
   audience: "Operations team",
   output_format: "json",
 };
-const idempotencyKey = `mainnet-paid-${crypto.randomUUID()}`;
-const headers = { "content-type": "application/json", "idempotency-key": idempotencyKey };
+const headers = { "content-type": "application/json" };
 
 const [metadataResponse, unpaid] = await Promise.all([
   fetch(new URL("/api/agent", deployment), { signal: AbortSignal.timeout(30_000) }),
@@ -92,7 +91,21 @@ if (process.env.CONFIRM_MAINNET_X402_PAYMENT !== "YES") {
 
 const signer = toClientEvmSigner(account, publicClient);
 const client = new x402Client().register(NETWORK, new ExactEvmScheme(signer));
-const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+let replayHeaders = null;
+const recordingFetch = async (input, init) => {
+  const outgoing = new Request(input, init);
+  const paymentSignature = outgoing.headers.get("payment-signature");
+  const xPayment = outgoing.headers.get("x-payment");
+  if (paymentSignature || xPayment) {
+    replayHeaders = {
+      "content-type": "application/json",
+      ...(paymentSignature ? { "payment-signature": paymentSignature } : {}),
+      ...(xPayment ? { "x-payment": xPayment } : {}),
+    };
+  }
+  return fetch(input, init);
+};
+const fetchWithPayment = wrapFetchWithPayment(recordingFetch, client);
 let paid;
 try {
   paid = await fetchWithPayment(endpoint, {
@@ -142,9 +155,31 @@ if (paid.status !== 200) {
   if (!paymentResponse) throw new Error("Successful paid response did not include payment-response.");
   const settlement = decodePaymentResponseHeader(paymentResponse);
   if (!settlement?.transaction) throw new Error("Successful paid response did not include a settlement reference.");
+  if (!replayHeaders) throw new Error("The official client did not emit a standard payment header.");
+  const duplicate = await fetch(endpoint, {
+    method: "POST",
+    headers: replayHeaders,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
+  });
+  const duplicateBody = await duplicate.json().catch(() => null);
+  if (duplicate.status !== 200
+    || duplicateBody?.request_id !== result.request_id
+    || duplicate.headers.get("x-idempotent-replay") !== "true") {
+    throw new Error("Completed paid-replay idempotency verification failed.");
+  }
+  const simultaneous = await Promise.all([
+    fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
+    fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
+  ]);
+  if (simultaneous.some((response) => response.status !== 200)) {
+    throw new Error("Simultaneous duplicate replay verification failed.");
+  }
   console.log(JSON.stringify({
     status: "completed",
     request_id: result.request_id,
     settlement_reference: settlement.transaction,
+    duplicate_replay: "pass",
+    simultaneous_duplicate_replay: "pass",
   }, null, 2));
 }

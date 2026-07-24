@@ -4,11 +4,13 @@ import { agentError } from "@/lib/agent/contract";
 import { generateAgentSop } from "@/lib/agent/generate";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import {
+  claimAgentRequest,
   findAgentRequest,
   findAgentPayment,
   recordUsage,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
+import { INTERNAL_PAYMENT_KEY_HEADER } from "@/lib/agent/payment-internal";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { validateAgentRequest } from "@/lib/agent/request-validation";
 import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
@@ -24,27 +26,6 @@ export async function GET() {
 export async function POST(request: Request) {
   const startedAt = Date.now();
   const fallbackRequestId = randomUUID();
-  const validated = await validateAgentRequest(request);
-  if (!validated.ok) {
-    return Response.json({
-      error: {
-        code: validated.code,
-        message: validated.message,
-        ...(validated.details ? { details: validated.details } : {}),
-        request_id: fallbackRequestId,
-      },
-    }, { status: validated.status });
-  }
-
-  const clientKey = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-  const rate = checkAgentRateLimit(clientKey);
-  if (!rate.allowed) {
-    return Response.json(
-      { error: { code: "RATE_LIMITED", message: "Too many requests. Please retry later.", request_id: fallbackRequestId } },
-      { status: 429, headers: { "retry-after": String(rate.retryAfter) } },
-    );
-  }
-
   const config = getOfficialPaymentConfig();
   if (config.requested && !config.ready) {
     return agentError("PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable.", 503, fallbackRequestId);
@@ -53,39 +34,68 @@ export async function POST(request: Request) {
     return agentError("SERVICE_BUSY", "Paid SOP generation is disabled.", 503, fallbackRequestId);
   }
 
-  const stored = await findAgentRequest(validated.idempotencyKey);
-  if (!stored) {
-    return agentError("PAYMENT_REQUIRED", "Payment is required.", 402, fallbackRequestId);
+  const replayKey = request.headers.get(INTERNAL_PAYMENT_KEY_HEADER)?.trim();
+  if (!replayKey) {
+    return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, fallbackRequestId);
   }
-  if (stored.request_hash !== validated.requestHash) {
-    return agentError("IDEMPOTENCY_CONFLICT", "This Idempotency-Key was already used with different request content.", 409, stored.id);
+
+  const validated = await validateAgentRequest(request);
+  if (!validated.ok) {
+    const invalidRequest = await findAgentRequest(replayKey);
+    if (invalidRequest) {
+      await updateAgentRequest(invalidRequest.id, {
+        status: "failed",
+        error_code: "INVALID_REQUEST",
+      });
+    }
+    return Response.json({
+      error: {
+        code: validated.code,
+        message: validated.message,
+        ...(validated.details ? { details: validated.details } : {}),
+        request_id: invalidRequest?.id ?? fallbackRequestId,
+        payment_status: invalidRequest ? "settled_recoverable" : "unknown",
+      },
+    }, { status: validated.status });
   }
-  if (stored.status === "completed" && stored.response_payload) {
-    return Response.json(stored.response_payload, {
+
+  const claim = await claimAgentRequest(replayKey, validated.requestHash);
+  if (claim.state === "completed" && claim.response_payload) {
+    return Response.json(claim.response_payload, {
       headers: { "x-idempotent-replay": "true", "cache-control": "no-store" },
     });
   }
-  if (stored.error_code === "PAYMENT_PERSISTENCE_FAILED") {
-    return agentError("PAYMENT_CONFIGURATION_ERROR", "Payment settled, but durable evidence could not be recorded. No content was generated.", 503, stored.id);
+  if (claim.state === "conflict") {
+    return agentError("PAYMENT_REPLAY_CONFLICT", "This payment is associated with different request content.", 409, claim.request_id ?? fallbackRequestId);
   }
-  if (stored.status === "settling" || stored.error_code === "PAYMENT_SETTLEMENT_UNKNOWN") {
-    return agentError(
-      "PAYMENT_SETTLEMENT_PENDING",
-      "Settlement is pending reconciliation. No new payment authorization will be issued.",
-      409,
-      stored.id,
+  if (claim.state === "busy") {
+    return agentError("REQUEST_IN_PROGRESS", "This request is already processing. Retry later.", 409, claim.request_id ?? fallbackRequestId);
+  }
+  if (claim.state !== "claimed") {
+    return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, claim.request_id ?? fallbackRequestId);
+  }
+
+  const stored = await findAgentRequest(replayKey);
+  if (!stored) {
+    return agentError("PAYMENT_REQUIRED", "Payment is required.", 402, fallbackRequestId);
+  }
+
+  const clientKey = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+  const rate = checkAgentRateLimit(clientKey);
+  if (!rate.allowed) {
+    await updateAgentRequest(stored.id, { status: "paid", error_code: "RATE_LIMITED" });
+    return Response.json(
+      { error: { code: "RATE_LIMITED", message: "Too many requests. Retry later; payment will not be charged again.", request_id: stored.id } },
+      { status: 429, headers: { "retry-after": String(rate.retryAfter) } },
     );
-  }
-  if (stored.status !== "paid") {
-    return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, stored.id);
   }
 
   const release = acquireGenerationSlot();
   if (!release) {
-    return agentError("SERVICE_BUSY", "Generation capacity is busy. Retry with the same Idempotency-Key.", 503, stored.id);
+    await updateAgentRequest(stored.id, { status: "paid", error_code: "SERVICE_BUSY" });
+    return agentError("SERVICE_BUSY", "Generation capacity is busy. Retry the same paid request later.", 503, stored.id);
   }
   try {
-    await updateAgentRequest(stored.id, { status: "processing" });
     securityLog("generation_started", { request_id: stored.id, route: "/api/agent/generate-sop" });
     const generated = await generateAgentSop(validated.input);
     const payment = await findAgentPayment(stored.id);
@@ -152,7 +162,7 @@ export async function POST(request: Request) {
     });
     return agentError(
       code,
-      timeout ? "SOP generation timed out. Retry with the same Idempotency-Key." : "SOP generation failed.",
+      timeout ? "SOP generation timed out. Retry the same paid request." : "SOP generation failed. Retry the same paid request.",
       timeout ? 504 : 502,
       stored.id,
     );

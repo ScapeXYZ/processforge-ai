@@ -49,7 +49,6 @@ const get = await request("/api/agent/generate-sop");
 assert(get.response.status === 405, `GET paid endpoint: expected 405, received ${get.response.status}`);
 const headers = {
   "content-type": "application/json",
-  "idempotency-key": `testnet-verify-${crypto.randomUUID()}`,
 };
 const invalid = await request("/api/agent/generate-sop", { method: "POST", headers, body: "{}" });
 assert(invalid.response.status === 402, `unpaid invalid POST: expected 402, received ${invalid.response.status}`);
@@ -64,7 +63,7 @@ const body = {
 };
 const unpaid = await request("/api/agent/generate-sop", {
   method: "POST",
-  headers: { ...headers, "idempotency-key": `${headers["idempotency-key"]}-unpaid` },
+  headers,
   body: JSON.stringify(body),
 });
 assert(unpaid.response.status === 402, `valid unpaid POST: expected 402, received ${unpaid.response.status}: ${unpaid.text}`);

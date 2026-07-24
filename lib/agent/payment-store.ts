@@ -25,6 +25,22 @@ export type AgentPaymentRecord = {
   settlement_status: "pending" | "settled" | "failed" | "unknown";
 };
 
+export type VerifiedPaymentReservation = {
+  request_id: string;
+  request_status: string;
+  error_code: string | null;
+  response_payload: Record<string, unknown> | null;
+  settlement_status: AgentPaymentRecord["settlement_status"];
+  is_new: boolean;
+  hash_matches: boolean;
+};
+
+export type AgentRequestClaim = {
+  request_id: string | null;
+  state: "claimed" | "completed" | "busy" | "conflict" | "missing" | "unpaid";
+  response_payload: Record<string, unknown> | null;
+};
+
 function database() {
   const client = createAdminClient();
   if (!client) throw new Error("PAYMENT_STORAGE_UNAVAILABLE");
@@ -41,24 +57,43 @@ export async function findAgentRequest(idempotencyKey: string): Promise<AgentReq
   return data as AgentRequestRecord | null;
 }
 
-export async function createAgentRequest(row: Record<string, unknown>): Promise<void> {
-  const { error } = await database().from("agent_requests").insert(row);
-  if (error && error.code !== "23505") throw new Error(`AGENT_REQUEST_INSERT_${error.code}`);
+export async function reserveVerifiedPaymentAtomic(
+  row: Record<string, unknown>,
+): Promise<VerifiedPaymentReservation> {
+  const { data, error } = await database().rpc("reserve_agent_verified_payment", {
+    p_replay_key: row.replay_key,
+    p_request_hash: row.request_hash,
+    p_service: row.service,
+    p_network: row.network,
+    p_price: row.price,
+    p_asset: row.asset,
+    p_payer_address: row.payer_address,
+    p_recipient_address: row.recipient_address,
+    p_amount: row.amount,
+  });
+  if (error) throw new Error(`PAYMENT_RESERVATION_${error.code}`);
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.request_id) throw new Error("PAYMENT_RESERVATION_EMPTY");
+  return result as VerifiedPaymentReservation;
+}
+
+export async function claimAgentRequest(
+  replayKey: string,
+  requestHash: string,
+): Promise<AgentRequestClaim> {
+  const { data, error } = await database().rpc("claim_agent_request_generation", {
+    p_replay_key: replayKey,
+    p_request_hash: requestHash,
+  });
+  if (error) throw new Error(`AGENT_REQUEST_CLAIM_${error.code}`);
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.state) throw new Error("AGENT_REQUEST_CLAIM_EMPTY");
+  return result as AgentRequestClaim;
 }
 
 export async function updateAgentRequest(id: string, patch: Record<string, unknown>): Promise<void> {
   const { error } = await database().from("agent_requests").update(patch).eq("id", id);
   if (error) throw new Error(`AGENT_REQUEST_UPDATE_${error.code}`);
-}
-
-export async function paymentFingerprintExists(fingerprint: string): Promise<boolean> {
-  const { data, error } = await database()
-    .from("agent_payments")
-    .select("id")
-    .eq("payment_reference", fingerprint)
-    .maybeSingle();
-  if (error) throw new Error(`PAYMENT_REPLAY_LOOKUP_${error.code}`);
-  return Boolean(data);
 }
 
 export async function findAgentPayment(requestId: string): Promise<AgentPaymentRecord | null> {
@@ -69,26 +104,6 @@ export async function findAgentPayment(requestId: string): Promise<AgentPaymentR
     .maybeSingle();
   if (error) throw new Error(`PAYMENT_LOOKUP_${error.code}`);
   return data as AgentPaymentRecord | null;
-}
-
-export async function reserveVerifiedPayment(row: Record<string, unknown>): Promise<void> {
-  const paymentRow = {
-    request_id: row.request_id,
-    payment_reference: row.payment_reference,
-    transaction_hash: null,
-    payer_address: row.payer_address,
-    recipient_address: row.recipient_address,
-    network: row.network,
-    asset: row.asset,
-    amount: row.amount,
-    verification_status: row.verification_status,
-    settlement_status: row.settlement_status,
-    verified_at: row.verified_at,
-    settled_at: row.settled_at,
-  };
-  const { error } = await database().from("agent_payments").insert(paymentRow);
-  if (error?.code === "23505") throw new Error("PAYMENT_REPLAYED");
-  if (error) throw new Error(`PAYMENT_EVIDENCE_INSERT_${error.code}`);
 }
 
 export async function updatePaymentSettlement(

@@ -36,7 +36,6 @@ assert(method.response.status === 405, `GET paid endpoint: expected HTTP 405, re
 
 const headers = {
   "content-type": "application/json",
-  "idempotency-key": `official-verify-${crypto.randomUUID()}`,
 };
 const invalid = await request("/api/agent/generate-sop", {
   method: "POST",
@@ -54,7 +53,7 @@ const validBody = {
 };
 const unpaid = await request("/api/agent/generate-sop", {
   method: "POST",
-  headers: { ...headers, "idempotency-key": `${headers["idempotency-key"]}-unpaid` },
+  headers,
   body: JSON.stringify(validBody),
 });
 
