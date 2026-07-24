@@ -127,6 +127,34 @@ test("verified signature hash produces a deterministic replay identity", () => {
   assert.equal(repeatedReplay.replayKey, first.replayKey);
 });
 
+test("signature at payload authorization derives the same identity", () => {
+  const authorizationSignaturePayload = {
+    ...paymentPayload,
+    payload: {
+      authorization: {
+        ...paymentPayload.payload.authorization,
+        signature: paymentPayload.payload.signature,
+      },
+    },
+  };
+  const fromPayload = extractVerifiedPaymentIdentity({
+    paymentPayload,
+    requirements,
+    result: { isValid: true, payer },
+    resource,
+  });
+  const fromAuthorization = extractVerifiedPaymentIdentity({
+    paymentPayload: authorizationSignaturePayload,
+    requirements,
+    result: { isValid: true, payer },
+    resource,
+  });
+
+  assert.ok(fromPayload);
+  assert.ok(fromAuthorization);
+  assert.equal(fromAuthorization.replayKey, fromPayload.replayKey);
+});
+
 test("different verified signatures produce different replay identities", () => {
   const first = extractVerifiedPaymentIdentity({
     paymentPayload,
@@ -155,13 +183,19 @@ test("different verified signatures produce different replay identities", () => 
 test("safe verification logging exposes keys but no signature or authorization values", () => {
   const shape = safeVerificationShape({
     paymentPayload,
-    result: { isValid: true },
+    result: { isValid: true, payer },
   });
   const serialized = JSON.stringify(shape);
 
-  assert.deepEqual(shape.resultKeys, ["isValid"]);
-  assert.deepEqual(shape.payloadKeys, ["authorization", "signature"]);
-  assert.ok(shape.authorizationKeys.includes("nonce"));
+  assert.deepEqual(shape, {
+    isValid: true,
+    invalidReasonExists: false,
+    payerExists: true,
+    payloadSignatureExists: true,
+    authorizationExists: true,
+    authorizationSignatureExists: false,
+    verificationKeys: ["isValid", "payer"],
+  });
   assert.doesNotMatch(serialized, new RegExp(nonce, "i"));
   assert.doesNotMatch(serialized, new RegExp(payer, "i"));
 });

@@ -81,7 +81,9 @@ export function extractVerifiedPaymentIdentity(input: {
 
   const payer = nonEmptyString(result.payer);
   const payload = asRecord(paymentPayload.payload);
-  const signature = nonEmptyString(payload?.signature);
+  const signature =
+    nonEmptyString(payload?.signature)
+    ?? nonEmptyString(paymentAuthorization(paymentPayload)?.signature);
   if (!payer || !signature) return null;
   const paymentSignatureHash = createHash("sha256").update(signature).digest("hex");
 
@@ -118,22 +120,26 @@ export function safeVerificationShape(input: {
   paymentPayload: PaymentPayload;
   result: VerifyResponse;
 }): {
-  resultKeys: string[];
-  resultExtensionKeys: string[];
-  paymentPayloadKeys: string[];
-  payloadKeys: string[];
-  authorizationKeys: string[];
+  isValid: boolean;
+  invalidReasonExists: boolean;
+  payerExists: boolean;
+  payloadSignatureExists: boolean;
+  authorizationExists: boolean;
+  authorizationSignatureExists: boolean;
+  verificationKeys: string[];
 } {
   const result = asRecord(input.result);
   const paymentPayload = asRecord(input.paymentPayload);
   const payload = asRecord(paymentPayload?.payload);
   const authorization = paymentAuthorization(input.paymentPayload);
   return {
-    resultKeys: safeKeys(result),
-    resultExtensionKeys: safeKeys(asRecord((result as VerificationShape | null)?.extensions)),
-    paymentPayloadKeys: safeKeys(paymentPayload),
-    payloadKeys: safeKeys(payload),
-    authorizationKeys: safeKeys(authorization),
+    isValid: input.result.isValid === true,
+    invalidReasonExists: nonEmptyString(input.result.invalidReason) !== null,
+    payerExists: nonEmptyString(input.result.payer) !== null,
+    payloadSignatureExists: nonEmptyString(payload?.signature) !== null,
+    authorizationExists: authorization !== null,
+    authorizationSignatureExists: nonEmptyString(authorization?.signature) !== null,
+    verificationKeys: safeKeys(result as VerificationShape | null),
   };
 }
 

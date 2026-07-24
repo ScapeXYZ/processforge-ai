@@ -9,6 +9,7 @@ import type {
 import {
   normalizeOfficialVerificationResult,
   safeRawVerificationShape,
+  safeVerificationShape,
 } from "@/lib/agent/verified-payment-identity";
 import { securityLog } from "@/lib/security/logger";
 
@@ -28,20 +29,18 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
   ): Promise<VerifyResponse> {
     const raw = await super.verify(payload, requirements) as unknown;
     const shape = safeRawVerificationShape(raw);
-    securityLog("payment_verification_shape", {
-      request_id: this.getApplicationRequestId(),
-      response_kind: shape.responseKind,
-      response_keys: shape.responseKeys,
-      item_keys: shape.itemKeys,
-      verification_keys: shape.verificationKeys,
-      authorization_exists: shape.authorizationExists,
-      authorization_from_exists: shape.authorizationFromExists,
-      payer_exists: shape.payerExists,
-      payment_id_exists: shape.paymentIdExists,
-      nonce_exists: shape.nonceExists,
-    });
     const normalized = normalizeOfficialVerificationResult(raw);
     if (!normalized) throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
+    const diagnostics = safeVerificationShape({ paymentPayload: payload, result: normalized });
+    securityLog("payment_verification_shape", {
+      is_valid: diagnostics.isValid,
+      invalid_reason_exists: diagnostics.invalidReasonExists,
+      payer_exists: diagnostics.payerExists,
+      payload_signature_exists: diagnostics.payloadSignatureExists,
+      authorization_exists: diagnostics.authorizationExists,
+      authorization_signature_exists: diagnostics.authorizationSignatureExists,
+      verification_keys: shape.verificationKeys,
+    });
     return normalized;
   }
 

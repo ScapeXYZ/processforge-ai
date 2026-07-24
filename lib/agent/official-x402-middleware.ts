@@ -132,12 +132,13 @@ function createOfficialProxy() {
     const context = requiredPaymentContext();
     const verificationShape = safeVerificationShape({ paymentPayload, result });
     securityLog("x402_verification_shape", {
-      request_id: context.requestId,
-      result_keys: verificationShape.resultKeys,
-      result_extension_keys: verificationShape.resultExtensionKeys,
-      payment_payload_keys: verificationShape.paymentPayloadKeys,
-      payload_keys: verificationShape.payloadKeys,
-      authorization_keys: verificationShape.authorizationKeys,
+      is_valid: verificationShape.isValid,
+      invalid_reason_exists: verificationShape.invalidReasonExists,
+      payer_exists: verificationShape.payerExists,
+      payload_signature_exists: verificationShape.payloadSignatureExists,
+      authorization_exists: verificationShape.authorizationExists,
+      authorization_signature_exists: verificationShape.authorizationSignatureExists,
+      verification_keys: verificationShape.verificationKeys,
     });
     const identity = extractVerifiedPaymentIdentity({
       paymentPayload,
