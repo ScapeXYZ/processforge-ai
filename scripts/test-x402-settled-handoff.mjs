@@ -14,16 +14,6 @@ function simulateSettledMiddleware(incoming) {
   });
 }
 
-function simulateRoute(headers) {
-  const handoff = readSettledPaymentHandoff(headers);
-  return new Response(JSON.stringify(handoff ? { sop: {} } : {
-    error: { code: "PAYMENT_REQUIRED" },
-  }), {
-    status: handoff ? 200 : 402,
-    headers: { "content-type": "application/json" },
-  });
-}
-
 test("settled middleware forwards only allowlisted and internal headers", () => {
   const incoming = new Headers({
     "content-type": "application/json",
@@ -54,7 +44,7 @@ test("settled middleware forwards only allowlisted and internal headers", () => 
   assert.equal(headers.get("x-unnecessary-header"), null);
 });
 
-test("both internal handoff headers reach the settled route", async () => {
+test("both internal handoff headers are readable by the route", () => {
   const headers = simulateSettledMiddleware(new Headers({
     "content-type": "application/json",
   }));
@@ -63,18 +53,15 @@ test("both internal handoff headers reach the settled route", async () => {
     headers.get(INTERNAL_PAYMENT_REQUEST_ID_HEADER),
     "975ffbba-a537-4366-acf9-305851da3454",
   );
-  const response = simulateRoute(headers);
-  assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { sop: {} });
+  assert.deepEqual(readSettledPaymentHandoff(headers), {
+    replayKey: "verified-replay-key",
+    requestId: "975ffbba-a537-4366-acf9-305851da3454",
+  });
 });
 
-test("missing or partial settled handoff remains HTTP 402", async () => {
-  const missing = simulateRoute(new Headers());
-  assert.equal(missing.status, 402);
-  assert.equal((await missing.json()).error.code, "PAYMENT_REQUIRED");
-
-  const partial = simulateRoute(new Headers({
+test("missing or partial optional handoff is absent", () => {
+  assert.equal(readSettledPaymentHandoff(new Headers()), null);
+  assert.equal(readSettledPaymentHandoff(new Headers({
     [INTERNAL_PAYMENT_KEY_HEADER]: "verified-replay-key",
-  }));
-  assert.equal(partial.status, 402);
+  })), null);
 });
