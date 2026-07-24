@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { agentSopRequestSchema } from "../lib/agent/contract.ts";
+import {
+  paidProxyRequestInit,
+  preservePaidRequestBody,
+} from "../lib/agent/paid-request-body.ts";
 
 const middlewareSource = readFileSync(
   resolve("lib/agent/official-x402-middleware.ts"),
@@ -30,7 +34,7 @@ function createPaidEndpointHarness() {
     get generationCount() {
       return generationCount;
     },
-    async request({ verifiedPaymentId, body }) {
+    async request({ verifiedPaymentId, body, rawBody = JSON.stringify(body) }) {
       if (!verifiedPaymentId) {
         return Response.json(
           { error: { code: "PAYMENT_REQUIRED" } },
@@ -38,7 +42,37 @@ function createPaidEndpointHarness() {
         );
       }
 
-      const parsed = agentSopRequestSchema.safeParse(body);
+      const originalRequest = new Request(
+        "https://processforgeai.xyz/api/agent/generate-sop",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "payment-signature": verifiedPaymentId,
+          },
+          body: rawBody,
+        },
+      );
+      const preservedBody = await preservePaidRequestBody(originalRequest);
+      const proxyRequest = new Request(
+        originalRequest.url,
+        paidProxyRequestInit(originalRequest, preservedBody),
+      );
+
+      // The x402 proxy is allowed to consume its reconstructed request. The
+      // original request must remain readable by the App Router route.
+      await proxyRequest.text();
+
+      let routeBody;
+      try {
+        routeBody = JSON.parse(await originalRequest.text());
+      } catch {
+        return Response.json(
+          { error: { code: "INVALID_REQUEST" } },
+          { status: 400 },
+        );
+      }
+      const parsed = agentSopRequestSchema.safeParse(routeBody);
       if (!parsed.success) {
         return Response.json(
           { error: { code: "INVALID_REQUEST" } },
@@ -107,6 +141,36 @@ test("verified request reaches the route exactly once and returns HTTP 200", asy
   assert.equal(routeCalls, 1);
 });
 
+test("JSON body survives paid replay proxy consumption and reaches the route", async () => {
+  const endpoint = createPaidEndpointHarness();
+  const unpaid = await endpoint.request({ body: validRequestBody });
+  const paidRequest = {
+    verifiedPaymentId: "paid-replay-proof",
+    body: validRequestBody,
+  };
+  const paid = await endpoint.request(paidRequest);
+  const duplicateReplay = await endpoint.request(paidRequest);
+
+  assert.equal(unpaid.status, 402);
+  assert.equal(paid.status, 200);
+  assert.equal(duplicateReplay.status, 200);
+  assert.equal(duplicateReplay.headers.get("x-idempotent-replay"), "true");
+  assert.equal(endpoint.generationCount, 1);
+  assert.deepEqual(await duplicateReplay.json(), await paid.json());
+});
+
+test("malformed JSON survives middleware and is rejected by route validation", async () => {
+  const endpoint = createPaidEndpointHarness();
+  const response = await endpoint.request({
+    verifiedPaymentId: "paid-malformed-json",
+    body: null,
+    rawBody: "{malformed",
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(endpoint.generationCount, 0);
+});
+
 test("verified payment without Idempotency-Key returns HTTP 200", async () => {
   const endpoint = createPaidEndpointHarness();
   const response = await endpoint.request({
@@ -161,6 +225,7 @@ test("middleware matches the exact paid route and route has no duplicate payment
     /A valid Idempotency-Key header|headers\.get\(["']idempotency-key["']\)/i,
   );
   assert.match(middlewareSource, /extractVerifiedPaymentIdentity/);
+  assert.match(middlewareSource, /proxy\(proxyRequest\)/);
   assert.match(
     identitySource,
     /const paymentSignatureHash = createHash\("sha256"\)\.update\(signature\)\.digest\("hex"\)/,

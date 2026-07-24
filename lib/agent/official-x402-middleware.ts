@@ -1,11 +1,10 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash } from "node:crypto";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
 import type { PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { paymentProxy } from "@okxweb3/x402-next";
-import { NextResponse, type NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/env/server";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
@@ -15,6 +14,11 @@ import {
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
 import { buildSettledRequestHeaders } from "@/lib/agent/payment-internal";
+import {
+  paidProxyRequestInit,
+  paidRequestBodyHash,
+  preservePaidRequestBody,
+} from "@/lib/agent/paid-request-body";
 import { AGENT_SERVICE, PRODUCTION_ORIGIN } from "@/lib/agent/service";
 import {
   extractVerifiedPaymentIdentity,
@@ -70,14 +74,19 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
     return response;
   }
 
+  const originalBody = await preservePaidRequestBody(request);
+  const proxyRequest = new NextRequest(
+    request.url,
+    paidProxyRequestInit(request, originalBody),
+  );
   const paidContext: PaymentRequestContext = {
     requestId: null,
-    requestHash: await requestBodyHash(request.clone()),
+    requestHash: paidRequestBodyHash(originalBody),
     paymentSignaturePresent,
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
   };
-  const response = await requestContext.run(paidContext, () => proxy(request));
+  const response = await requestContext.run(paidContext, () => proxy(proxyRequest));
 
   if (paidContext.replayDecision === "completed" && paidContext.storedResponse) {
     logMiddlewareResult(paidContext, 200);
@@ -341,14 +350,6 @@ function requiredReservedContext(): PaymentRequestContext & { requestId: string;
   const context = requiredPaymentContext();
   if (!context.requestId || !context.paymentReference) throw new Error("PAYMENT_RESERVATION_CONTEXT_MISSING");
   return { ...context, requestId: context.requestId, paymentReference: context.paymentReference };
-}
-
-async function requestBodyHash(request: Request): Promise<string> {
-  try {
-    return createHash("sha256").update(await request.text()).digest("hex");
-  } catch {
-    return createHash("sha256").update("UNREADABLE_REQUEST_BODY").digest("hex");
-  }
 }
 
 function continueWithVerifiedPayment(
