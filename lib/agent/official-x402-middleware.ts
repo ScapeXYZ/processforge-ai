@@ -15,7 +15,7 @@ import {
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
 import { buildSettledRequestHeaders } from "@/lib/agent/payment-internal";
-import { AGENT_SERVICE } from "@/lib/agent/service";
+import { AGENT_SERVICE, PRODUCTION_ORIGIN } from "@/lib/agent/service";
 import {
   extractVerifiedPaymentIdentity,
   safeVerificationShape,
@@ -133,7 +133,8 @@ function createOfficialProxy() {
     const verificationShape = safeVerificationShape({ paymentPayload, result });
     securityLog("x402_verification_shape", {
       is_valid: verificationShape.isValid,
-      invalid_reason_exists: verificationShape.invalidReasonExists,
+      invalid_reason: verificationShape.invalidReason,
+      invalid_message: verificationShape.invalidMessage,
       payer_exists: verificationShape.payerExists,
       payload_signature_exists: verificationShape.payloadSignatureExists,
       authorization_exists: verificationShape.authorizationExists,
@@ -144,7 +145,7 @@ function createOfficialProxy() {
       paymentPayload,
       requirements,
       result,
-      resource: `${getAppBaseUrl()}${PAYMENT_ROUTE}`,
+      resource: `${paymentResourceOrigin()}${PAYMENT_ROUTE}`,
     });
     if (!identity || !context.requestHash) {
       throw new Error("VERIFIED_PAYMENT_IDENTITY_MISSING");
@@ -277,7 +278,7 @@ function createOfficialProxy() {
     }
   });
 
-  const resource = `${getAppBaseUrl()}/api/agent/generate-sop`;
+  const resource = `${paymentResourceOrigin()}/api/agent/generate-sop`;
   return paymentProxy({
     "POST /api/agent/generate-sop": {
       accepts: {
@@ -316,6 +317,18 @@ function createOfficialProxy() {
       }),
     },
   }, server, undefined, undefined, true);
+}
+
+// The resource URL is embedded in the 402 challenge and used to build the
+// replay-identity hash; it must match the domain OKX Agents actually sign
+// against. getAppBaseUrl() reads the optional APP_BASE_URL env var and
+// silently falls back to http://localhost:3000 if it's unset — a fallback
+// that must never reach production. PRODUCTION_ORIGIN is the one
+// already-declared source of truth for the real production domain, so it
+// takes precedence whenever the app is actually running in production.
+function paymentResourceOrigin(): string {
+  if (process.env.NODE_ENV === "production") return PRODUCTION_ORIGIN;
+  return getAppBaseUrl();
 }
 
 function requiredPaymentContext(): PaymentRequestContext {

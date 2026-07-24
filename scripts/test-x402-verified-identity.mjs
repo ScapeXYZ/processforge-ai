@@ -189,7 +189,8 @@ test("safe verification logging exposes keys but no signature or authorization v
 
   assert.deepEqual(shape, {
     isValid: true,
-    invalidReasonExists: false,
+    invalidReason: null,
+    invalidMessage: null,
     payerExists: true,
     payloadSignatureExists: true,
     authorizationExists: true,

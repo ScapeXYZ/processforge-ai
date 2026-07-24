@@ -31,10 +31,14 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
     const shape = safeRawVerificationShape(raw);
     const normalized = normalizeOfficialVerificationResult(raw);
     if (!normalized) throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
-    const diagnostics = safeVerificationShape({ paymentPayload: payload, result: normalized });
+    const diagnostics = safeVerificationShape({
+      paymentPayload: payload,
+      result: normalized,
+    });
     securityLog("payment_verification_shape", {
       is_valid: diagnostics.isValid,
-      invalid_reason_exists: diagnostics.invalidReasonExists,
+      invalid_reason: diagnostics.invalidReason,
+      invalid_message: diagnostics.invalidMessage,
       payer_exists: diagnostics.payerExists,
       payload_signature_exists: diagnostics.payloadSignatureExists,
       authorization_exists: diagnostics.authorizationExists,

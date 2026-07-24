@@ -121,7 +121,8 @@ export function safeVerificationShape(input: {
   result: VerifyResponse;
 }): {
   isValid: boolean;
-  invalidReasonExists: boolean;
+  invalidReason: string | null;
+  invalidMessage: string | null;
   payerExists: boolean;
   payloadSignatureExists: boolean;
   authorizationExists: boolean;
@@ -134,13 +135,22 @@ export function safeVerificationShape(input: {
   const authorization = paymentAuthorization(input.paymentPayload);
   return {
     isValid: input.result.isValid === true,
-    invalidReasonExists: nonEmptyString(input.result.invalidReason) !== null,
+    invalidReason: scrubDiagnosticText(input.result.invalidReason),
+    invalidMessage: scrubDiagnosticText(input.result.invalidMessage),
     payerExists: nonEmptyString(input.result.payer) !== null,
     payloadSignatureExists: nonEmptyString(payload?.signature) !== null,
     authorizationExists: authorization !== null,
     authorizationSignatureExists: nonEmptyString(authorization?.signature) !== null,
     verificationKeys: safeKeys(result as VerificationShape | null),
   };
+}
+
+function scrubDiagnosticText(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  return value
+    .replace(/0x[a-fA-F0-9]{8,}/g, "[redacted]")
+    .replace(/[A-Za-z0-9+/=_-]{80,}/g, "[redacted]")
+    .slice(0, 160);
 }
 
 function paymentAuthorization(paymentPayload: PaymentPayload): Record<string, unknown> | null {
