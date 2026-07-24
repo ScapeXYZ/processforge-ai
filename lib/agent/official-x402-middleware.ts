@@ -2,7 +2,7 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
-import type { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
+import type { PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
 import { paymentProxy } from "@okxweb3/x402-next";
 import { NextResponse, type NextRequest } from "next/server";
@@ -16,6 +16,10 @@ import {
 } from "@/lib/agent/payment-store";
 import { buildSettledRequestHeaders } from "@/lib/agent/payment-internal";
 import { AGENT_SERVICE } from "@/lib/agent/service";
+import {
+  extractVerifiedPaymentIdentity,
+  safeVerificationShape,
+} from "@/lib/agent/verified-payment-identity";
 import { securityLog } from "@/lib/security/logger";
 
 type PaymentRequestContext = {
@@ -126,24 +130,38 @@ function createOfficialProxy() {
 
   server.onAfterVerify(async ({ paymentPayload, requirements, result }) => {
     const context = requiredPaymentContext();
-    if (!result.isValid || !result.payer || !context.requestHash) {
+    const verificationShape = safeVerificationShape({ paymentPayload, result });
+    securityLog("x402_verification_shape", {
+      request_id: context.requestId,
+      result_keys: verificationShape.resultKeys,
+      result_extension_keys: verificationShape.resultExtensionKeys,
+      payment_payload_keys: verificationShape.paymentPayloadKeys,
+      payload_keys: verificationShape.payloadKeys,
+      authorization_keys: verificationShape.authorizationKeys,
+    });
+    const identity = extractVerifiedPaymentIdentity({
+      paymentPayload,
+      requirements,
+      result,
+      resource: `${getAppBaseUrl()}${PAYMENT_ROUTE}`,
+    });
+    if (!identity || !context.requestHash) {
       throw new Error("VERIFIED_PAYMENT_IDENTITY_MISSING");
     }
-    const reference = verifiedPaymentReplayKey(paymentPayload, requirements, result.payer);
     const reservation = await reserveVerifiedPaymentAtomic({
-      replay_key: reference,
+      replay_key: identity.replayKey,
       request_hash: context.requestHash,
       service: AGENT_SERVICE,
-      network: requirements.network,
-      price: requirements.amount,
-      asset: requirements.asset,
-      payer_address: result.payer,
-      recipient_address: requirements.payTo,
-      amount: requirements.amount,
+      network: identity.network,
+      price: identity.amount,
+      asset: identity.asset,
+      payer_address: identity.payer,
+      recipient_address: identity.payTo,
+      amount: identity.amount,
     });
     context.requestId = reservation.request_id;
-    context.paymentReference = reference;
-    context.verifiedPayer = result.payer;
+    context.paymentReference = identity.replayKey;
+    context.verifiedPayer = identity.payer;
     context.verifiedRequirements = requirements;
     context.middlewareResult = "verified";
 
@@ -299,31 +317,6 @@ function createOfficialProxy() {
   }, server, undefined, undefined, true);
 }
 
-function verifiedPaymentReplayKey(
-  paymentPayload: PaymentPayload,
-  requirements: PaymentRequirements,
-  verifiedPayer: string,
-): string {
-  const authorization = asRecord(paymentPayload.payload.authorization);
-  const permit2Authorization = asRecord(paymentPayload.payload.permit2Authorization);
-  const nonce = authorization?.nonce ?? permit2Authorization?.nonce;
-  if (typeof nonce !== "string" || nonce.length === 0) {
-    throw new Error("VERIFIED_PAYMENT_NONCE_MISSING");
-  }
-  const identity = {
-    x402Version: paymentPayload.x402Version,
-    scheme: requirements.scheme,
-    network: requirements.network,
-    asset: requirements.asset,
-    amount: requirements.amount,
-    payTo: requirements.payTo.toLowerCase(),
-    payer: verifiedPayer.toLowerCase(),
-    resource: `${getAppBaseUrl()}${PAYMENT_ROUTE}`,
-    nonce,
-  };
-  return createHash("sha256").update(JSON.stringify(identity)).digest("hex");
-}
-
 function requiredPaymentContext(): PaymentRequestContext {
   const context = requestContext.getStore();
   if (!context) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
@@ -362,10 +355,6 @@ function continueWithVerifiedPayment(
   const settlementReceipt = paymentResponse.headers.get("payment-response");
   if (settlementReceipt) next.headers.set("payment-response", settlementReceipt);
   return next;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? value as Record<string, unknown> : null;
 }
 
 function safeOfficialError(error: unknown): { code: string; message: string } {

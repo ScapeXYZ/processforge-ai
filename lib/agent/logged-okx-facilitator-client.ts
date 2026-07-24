@@ -4,7 +4,12 @@ import type {
   PaymentPayload,
   PaymentRequirements,
   SettleResponse,
+  VerifyResponse,
 } from "@okxweb3/x402-core/types";
+import {
+  normalizeOfficialVerificationResult,
+  safeRawVerificationShape,
+} from "@/lib/agent/verified-payment-identity";
 import { securityLog } from "@/lib/security/logger";
 
 type ErrorRecord = Record<string, unknown>;
@@ -15,6 +20,23 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
     private readonly getApplicationRequestId: () => string | null,
   ) {
     super(config);
+  }
+
+  override async verify(
+    payload: PaymentPayload,
+    requirements: PaymentRequirements,
+  ): Promise<VerifyResponse> {
+    const raw = await super.verify(payload, requirements) as unknown;
+    const shape = safeRawVerificationShape(raw);
+    securityLog("payment_verification_shape", {
+      request_id: this.getApplicationRequestId(),
+      response_kind: shape.responseKind,
+      response_keys: shape.responseKeys,
+      item_keys: shape.itemKeys,
+    });
+    const normalized = normalizeOfficialVerificationResult(raw);
+    if (!normalized) throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
+    return normalized;
   }
 
   override async settle(

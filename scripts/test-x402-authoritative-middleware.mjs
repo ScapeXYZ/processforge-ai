@@ -12,6 +12,10 @@ const routeSource = readFileSync(
   resolve("app/api/agent/generate-sop/route.ts"),
   "utf8",
 );
+const identitySource = readFileSync(
+  resolve("lib/agent/verified-payment-identity.ts"),
+  "utf8",
+);
 
 async function mockProxy({ paymentResult, route }) {
   if (paymentResult) return paymentResult;
@@ -156,10 +160,10 @@ test("middleware matches the exact paid route and route has no duplicate payment
     middlewareSource,
     /A valid Idempotency-Key header|headers\.get\(["']idempotency-key["']\)/i,
   );
-  assert.match(middlewareSource, /verifiedPaymentReplayKey/);
+  assert.match(middlewareSource, /extractVerifiedPaymentIdentity/);
   assert.match(
-    middlewareSource,
-    /const nonce = authorization\?\.nonce \?\? permit2Authorization\?\.nonce/,
+    identitySource,
+    /const nonce = nonEmptyString\(authorization\?\.nonce\)/,
   );
   assert.match(middlewareSource, /x-idempotent-replay/);
   assert.match(routeSource, /route_handler_entered/);
