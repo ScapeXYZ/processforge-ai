@@ -23,12 +23,15 @@ const retiredAcceptance = await request("/api/invitations/accept", { method: "PO
 const removedAcceptancePage = await request("/invitations/accept"); assert(removedAcceptancePage.response.status === 404, "Removed invitation acceptance page", `HTTP ${removedAcceptancePage.response.status}`);
 const getPaid = await request("/api/agent/generate-sop"); assert(getPaid.response.status === 405, "Paid endpoint method", `HTTP ${getPaid.response.status}`);
 const baseHeaders = { "content-type": "application/json", "idempotency-key": `release-${Date.now()}` };
-const invalid = await request("/api/agent/generate-sop", { method: "POST", headers: baseHeaders, body: "{}" }); assert(invalid.response.status === 400, "Invalid paid request", `HTTP ${invalid.response.status}`);
+const invalid = await request("/api/agent/generate-sop", { method: "POST", headers: baseHeaders, body: "{}" });
 const payload = { title: "Supplier invoice approval", description: "When a supplier invoice arrives, Accounting validates it, records approval evidence within two business days, escalates exceptions, and schedules payment.", industry: "Finance", department: "Accounting", audience: "Accounts payable team", requirements: ["Define approval and exception evidence"], output_format: "json" };
 const unpaid = await request("/api/agent/generate-sop", { method: "POST", headers: { ...baseHeaders, "idempotency-key": `${baseHeaders["idempotency-key"]}-unpaid` }, body: JSON.stringify(payload) });
 if (metadata.body?.pricing?.enabled) {
+  assert(invalid.response.status === 402, "Unpaid invalid request receives payment challenge", `HTTP ${invalid.response.status}`);
+  assert(invalid.response.headers.get("payment-required"), "Unpaid invalid request challenge header", "present");
   assert(unpaid.response.status === 402 && Boolean(unpaid.response.headers.get("payment-required")), "Official payment challenge", `HTTP ${unpaid.response.status}`);
 } else {
+  assert(invalid.response.status === 400, "Disabled invalid request validation", `HTTP ${invalid.response.status}`);
   assert(unpaid.response.status === 503 && unpaid.body?.error?.code === "SERVICE_BUSY", "Disabled paid endpoint", `HTTP ${unpaid.response.status}`);
   assert(!unpaid.response.headers.get("payment-required"), "No disabled payment challenge", "header absent");
 }

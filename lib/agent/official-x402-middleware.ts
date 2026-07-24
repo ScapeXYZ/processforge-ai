@@ -19,13 +19,13 @@ import {
   updateAgentRequest,
   type AgentRequestRecord,
 } from "@/lib/agent/payment-store";
-import { validateAgentRequest, type ValidAgentRequest } from "@/lib/agent/request-validation";
+import { validateAgentRequest } from "@/lib/agent/request-validation";
 import { AGENT_SERVICE } from "@/lib/agent/service";
 import { securityLog } from "@/lib/security/logger";
 
-type PaymentRequestContext = ValidAgentRequest & {
-  requestId: string;
-  record: AgentRequestRecord;
+type PaymentRequestContext = {
+  requestId: string | null;
+  record: AgentRequestRecord | null;
   paymentSignaturePresent: boolean;
   xPaymentHeaderPresent: boolean;
   middlewareResult: "challenge" | "verified" | "settled" | "rejected";
@@ -34,6 +34,11 @@ type PaymentRequestContext = ValidAgentRequest & {
   paymentReference?: string;
   verifiedPayer?: string;
   verifiedRequirements?: PaymentRequirements;
+};
+
+type PreparedPaymentRequestContext = PaymentRequestContext & {
+  requestId: string;
+  record: AgentRequestRecord;
 };
 
 const PAYMENT_ROUTE = "/api/agent/generate-sop";
@@ -48,6 +53,27 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
     return jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable.");
   }
   if (!config.enabled) return null;
+
+  const paymentSignaturePresent = request.headers.has("payment-signature");
+  const xPaymentHeaderPresent = request.headers.has("x-payment");
+  const proxy = cachedProxy ??= createOfficialProxy();
+
+  // Unpaid probes must reach the official x402 wrapper before any business-body
+  // validation so every POST probe receives the standards-compliant 402 offer.
+  // Proof-bearing retries are validated below before verification/settlement,
+  // which prevents malformed requests from consuming a payment.
+  if (!paymentSignaturePresent && !xPaymentHeaderPresent) {
+    const challengeContext: PaymentRequestContext = {
+      requestId: null,
+      record: null,
+      paymentSignaturePresent,
+      xPaymentHeaderPresent,
+      middlewareResult: "challenge",
+    };
+    const response = await requestContext.run(challengeContext, () => proxy(request));
+    logMiddlewareResult(challengeContext, response.status);
+    return response;
+  }
 
   const prepared = await prepareRequest(request, config);
   if (prepared instanceof NextResponse) return prepared;
@@ -76,7 +102,6 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
     );
   }
   if (["paid", "processing", "completed"].includes(prepared.record.status)) return null;
-  const proxy = cachedProxy ??= createOfficialProxy();
   const response = await requestContext.run(prepared, () => proxy(request));
   if (response.status === 402 && (prepared.paymentSignaturePresent || prepared.xPaymentHeaderPresent)) {
     prepared.middlewareResult = "rejected";
@@ -88,7 +113,7 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
 async function prepareRequest(
   request: NextRequest,
   config: ReturnType<typeof getOfficialPaymentConfig>,
-): Promise<PaymentRequestContext | NextResponse> {
+): Promise<PreparedPaymentRequestContext | NextResponse> {
   const validated = await validateAgentRequest(request.clone());
   if (!validated.ok) {
     return NextResponse.json({
@@ -121,7 +146,6 @@ async function prepareRequest(
     if (!record) throw new Error("AGENT_REQUEST_NOT_DURABLE");
   }
   return {
-    ...validated,
     requestId: record.id,
     record,
     paymentSignaturePresent: request.headers.has("payment-signature"),
@@ -144,7 +168,7 @@ function createOfficialProxy() {
     .register(config.network, new ExactEvmScheme());
 
   server.onBeforeVerify(async ({ paymentPayload }) => {
-    const context = requiredContext();
+    const context = requiredPaidContext();
     const fingerprint = paymentFingerprint(paymentPayload);
     if (pendingFingerprints.has(fingerprint) || await paymentFingerprintExists(fingerprint)) {
       return { abort: true, reason: "PAYMENT_REPLAYED", message: "This payment proof has already been consumed." };
@@ -152,7 +176,7 @@ function createOfficialProxy() {
     context.paymentReference = fingerprint;
   });
   server.onAfterVerify(async ({ paymentPayload, requirements, result }) => {
-    const context = requiredContext();
+    const context = requiredPaidContext();
     const reference = context.paymentReference ?? paymentFingerprint(paymentPayload);
     if (pendingFingerprints.has(reference)) throw new Error("PAYMENT_REPLAYED");
     pendingFingerprints.add(reference);
@@ -181,7 +205,7 @@ function createOfficialProxy() {
     }
   });
   server.onAfterSettle(async ({ result }) => {
-    const context = requiredContext();
+    const context = requiredPaidContext();
     const requirements = context.verifiedRequirements;
     if (!context.paymentReference || !requirements) throw new Error("SETTLEMENT_CONTEXT_MISSING");
     const settlementStatus =
@@ -240,7 +264,7 @@ function createOfficialProxy() {
   });
   server.onSettleFailure(async ({ error }) => {
     const context = requestContext.getStore();
-    if (context) {
+    if (context?.requestId && context.record) {
       const safeError = safeOfficialError(error);
       context.middlewareResult = "rejected";
       context.officialErrorCode = safeError.code;
@@ -304,10 +328,10 @@ function paymentFingerprint(paymentPayload: PaymentPayload): string {
   return createHash("sha256").update(JSON.stringify(paymentPayload)).digest("hex");
 }
 
-function requiredContext(): PaymentRequestContext {
+function requiredPaidContext(): PreparedPaymentRequestContext {
   const context = requestContext.getStore();
-  if (!context) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
-  return context;
+  if (!context?.requestId || !context.record) throw new Error("PAYMENT_REQUEST_CONTEXT_MISSING");
+  return { ...context, requestId: context.requestId, record: context.record };
 }
 
 function safeOfficialError(error: unknown): { code: string; message: string } {

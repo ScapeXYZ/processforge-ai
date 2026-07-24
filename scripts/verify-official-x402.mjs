@@ -43,7 +43,6 @@ const invalid = await request("/api/agent/generate-sop", {
   headers,
   body: "{}",
 });
-assert(invalid.response.status === 400, `invalid POST: expected HTTP 400, received ${invalid.response.status}`);
 
 const validBody = {
   title: "Official x402 verification",
@@ -65,6 +64,8 @@ assert(!unpaid.response.headers.get("x-mock-payment-token"), "legacy mock paymen
 
 let requirement = null;
 if (pricing?.enabled === true) {
+  assert(invalid.response.status === 402, `unpaid invalid POST: expected HTTP 402, received ${invalid.response.status}`);
+  assert(invalid.response.headers.get("payment-required"), "unpaid invalid POST is missing payment-required");
   assert(paymentStatus?.status === "ready", `payment health: expected ready, received ${JSON.stringify(paymentStatus?.status)}`);
   assert(paymentStatus?.provider === "okx-official", `payment provider: expected okx-official, received ${JSON.stringify(paymentStatus?.provider)}`);
   assert(unpaid.response.status === 402, `unpaid POST: expected HTTP 402, received ${unpaid.response.status}`);
@@ -81,6 +82,7 @@ if (pricing?.enabled === true) {
   assert(String(requirement.amount) === String(pricing.amount), `amount: expected ${JSON.stringify(pricing.amount)}, received ${JSON.stringify(requirement.amount)}`);
   assert(/^0x[a-fA-F0-9]{40}$/.test(requirement?.payTo || ""), `payTo: expected EVM address, received ${JSON.stringify(requirement?.payTo)}`);
 } else {
+  assert(invalid.response.status === 400, `disabled invalid POST: expected HTTP 400, received ${invalid.response.status}`);
   assert(paymentStatus?.status === "disabled", `disabled payment health: expected disabled, received ${JSON.stringify(paymentStatus?.status)}`);
   assert(unpaid.response.status === 503, `disabled paid endpoint: expected HTTP 503, received ${unpaid.response.status}`);
   assert(!unpaid.response.headers.get("payment-required"), "disabled service must not emit a payment challenge");

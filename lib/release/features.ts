@@ -19,6 +19,6 @@ export const releaseFeatures: ReleaseFeature[] = [
   { name: "No invitation controls", status: "ready", steps: "Inspect workspace, dashboard, header, authentication, and SOP views; no invitation or member-management controls should appear." },
   { name: "Public template marketplace", status: "review", steps: "Browse/search/filter/detail, publish sanitized content, copy, rate, favorite, and verify creator/private boundaries." },
   { name: "Agent metadata and health", status: "ready", steps: "Verify /api/agent and /api/agent/health return 200 without secrets." },
-  { name: "Paid agent and x402 mock flow", status: "ready", steps: "Run npm run verify:x402 and confirm 400, 402, mock 200, idempotency, and eip155:1952." },
+  { name: "Paid agent and x402 flow", status: "ready", steps: "Run npm run verify:x402 and confirm GET 405, unpaid POST 402 with a valid challenge, paid replay, and idempotency." },
   { name: "Official X Layer production settlement", status: "limited", steps: "Requires production credentials, supported asset, recipient wallet, eip155:196, custom HTTPS domain, and funded end-to-end test." },
 ];

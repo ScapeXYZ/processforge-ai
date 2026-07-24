@@ -52,7 +52,8 @@ const headers = {
   "idempotency-key": `testnet-verify-${crypto.randomUUID()}`,
 };
 const invalid = await request("/api/agent/generate-sop", { method: "POST", headers, body: "{}" });
-assert(invalid.response.status === 400, `invalid POST: expected 400, received ${invalid.response.status}`);
+assert(invalid.response.status === 402, `unpaid invalid POST: expected 402, received ${invalid.response.status}`);
+assert(invalid.response.headers.get("payment-required"), "unpaid invalid POST is missing payment-required");
 const body = {
   title: "X Layer testnet verification",
   description: "Operations validates a request, records evidence, obtains approval, and escalates exceptions.",

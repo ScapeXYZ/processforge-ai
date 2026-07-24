@@ -32,7 +32,7 @@ Record `Pass`, `Fail`, or `Blocked` and link a screenshot, video, console captur
 | Error/empty states | Empty account and blocked network | Open each dashboard/list and retry failures | Clear empty action; concise retry; no stale “Saved” state | ___ | ___ |
 | Database permissions | Staging users in separate workspaces | Query/read/update foreign IDs and private template rows | RLS denies every unauthorized operation | ___ | ___ |
 | Agent metadata/health | Running app | GET both free endpoints | HTTP 200; documented fields; no secrets | ___ | ___ |
-| x402 mock | Development server | Run `npm run verify:x402` | 400/405/402/200 and `eip155:1952` pass; explicitly mock | ___ | ___ |
+| x402 handshake | Development server | Run `npm run verify:x402` | GET returns 405; every unpaid POST returns 402 with a valid challenge; paid replay behavior passes | ___ | ___ |
 | x402 production | Funded approved setup | Official unpaid request, buyer authorization, paid retry, replay | `eip155:196`; official verification/settlement; replay rejected | ___ | ___ |
 | Performance | Representative 50 SOPs/10 documents/templates | Profile dashboard, analytics, compliance, export, search | No runaway requests/calculations; acceptable interaction time | ___ | ___ |
 | Security | Staging and browser developer tools | Inspect bundles/responses/logs; submit oversized/malformed/HTML/prompt-injection inputs | No secrets/XSS/private objects; bounded validation; safe errors/logs | ___ | ___ |

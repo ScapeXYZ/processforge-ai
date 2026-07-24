@@ -1,6 +1,6 @@
 # ProcessForge paid agent (x402)
 
-`POST /api/agent/generate-sop` is a machine-callable paid service. Input validation is free and happens before payment. A valid unpaid request receives HTTP `402`, a JSON x402 v2 requirement, and the same requirement in the `payment-required` response header. The seller verifies and settles an official `payment-signature` with the OKX facilitator before starting OpenAI generation.
+`POST /api/agent/generate-sop` is a machine-callable paid service. Every unpaid POST reaches the official payment wrapper before business-body validation and receives HTTP `402` with an x402 v2 requirement in the `payment-required` response header. On a proof-bearing retry, the server validates the idempotency key and request body before asking the official OKX facilitator to verify and settle the payment, so malformed requests cannot consume payment. OpenAI generation starts only after successful settlement.
 
 ## Request
 
