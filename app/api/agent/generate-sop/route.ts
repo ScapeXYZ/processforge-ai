@@ -4,13 +4,12 @@ import { agentError } from "@/lib/agent/contract";
 import { generateAgentSop } from "@/lib/agent/generate";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import {
-  claimAgentRequest,
   findAgentRequest,
   findAgentPayment,
   recordUsage,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
-import { INTERNAL_PAYMENT_KEY_HEADER } from "@/lib/agent/payment-internal";
+import { readSettledPaymentHandoff } from "@/lib/agent/payment-internal";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { validateAgentRequest } from "@/lib/agent/request-validation";
 import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
@@ -26,6 +25,12 @@ export async function GET() {
 export async function POST(request: Request) {
   const startedAt = Date.now();
   const fallbackRequestId = randomUUID();
+  const handoff = readSettledPaymentHandoff(request.headers);
+  securityLog("route_handler_entered", {
+    request_id: handoff?.requestId ?? fallbackRequestId,
+    route: "/api/agent/generate-sop",
+    settled_payment: Boolean(handoff),
+  });
   const config = getOfficialPaymentConfig();
   if (config.requested && !config.ready) {
     return agentError("PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable.", 503, fallbackRequestId);
@@ -34,51 +39,32 @@ export async function POST(request: Request) {
     return agentError("SERVICE_BUSY", "Paid SOP generation is disabled.", 503, fallbackRequestId);
   }
 
-  const replayKey = request.headers.get(INTERNAL_PAYMENT_KEY_HEADER)?.trim();
-  if (!replayKey) {
+  if (!handoff) {
     return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, fallbackRequestId);
   }
 
   const validated = await validateAgentRequest(request);
   if (!validated.ok) {
-    const invalidRequest = await findAgentRequest(replayKey);
-    if (invalidRequest) {
-      await updateAgentRequest(invalidRequest.id, {
-        status: "failed",
-        error_code: "INVALID_REQUEST",
-      });
-    }
+    await updateAgentRequest(handoff.requestId, {
+      status: "failed",
+      error_code: "INVALID_REQUEST",
+    });
     return Response.json({
       error: {
         code: validated.code,
         message: validated.message,
         ...(validated.details ? { details: validated.details } : {}),
-        request_id: invalidRequest?.id ?? fallbackRequestId,
-        payment_status: invalidRequest ? "settled_recoverable" : "unknown",
+        request_id: handoff.requestId,
+        payment_status: "settled_recoverable",
       },
     }, { status: validated.status });
   }
 
-  const claim = await claimAgentRequest(replayKey, validated.requestHash);
-  if (claim.state === "completed" && claim.response_payload) {
-    return Response.json(claim.response_payload, {
-      headers: { "x-idempotent-replay": "true", "cache-control": "no-store" },
-    });
-  }
-  if (claim.state === "conflict") {
-    return agentError("PAYMENT_REPLAY_CONFLICT", "This payment is associated with different request content.", 409, claim.request_id ?? fallbackRequestId);
-  }
-  if (claim.state === "busy") {
-    return agentError("REQUEST_IN_PROGRESS", "This request is already processing. Retry later.", 409, claim.request_id ?? fallbackRequestId);
-  }
-  if (claim.state !== "claimed") {
-    return agentError("PAYMENT_REQUIRED", "A successfully settled payment is required.", 402, claim.request_id ?? fallbackRequestId);
-  }
-
-  const stored = await findAgentRequest(replayKey);
-  if (!stored) {
+  const stored = await findAgentRequest(handoff.replayKey);
+  if (!stored || stored.id !== handoff.requestId) {
     return agentError("PAYMENT_REQUIRED", "Payment is required.", 402, fallbackRequestId);
   }
+  await updateAgentRequest(stored.id, { status: "processing", error_code: null });
 
   const clientKey = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const rate = checkAgentRateLimit(clientKey);
@@ -136,6 +122,12 @@ export async function POST(request: Request) {
       route: "/api/agent/generate-sop",
       duration_ms: duration,
     });
+    securityLog("sop_response_status", {
+      request_id: stored.id,
+      route: "/api/agent/generate-sop",
+      http_status: 200,
+      sop_present: true,
+    });
     return Response.json(response, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const timeout = error instanceof OpenAI.APIConnectionTimeoutError;
@@ -159,6 +151,12 @@ export async function POST(request: Request) {
       route: "/api/agent/generate-sop",
       error_name: error instanceof Error ? error.name : "UnknownError",
       duration_ms: duration,
+    });
+    securityLog("sop_response_status", {
+      request_id: stored.id,
+      route: "/api/agent/generate-sop",
+      http_status: timeout ? 504 : 502,
+      sop_present: false,
     });
     return agentError(
       code,

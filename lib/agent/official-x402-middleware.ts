@@ -14,7 +14,7 @@ import {
   updatePaymentSettlement,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
-import { INTERNAL_PAYMENT_KEY_HEADER } from "@/lib/agent/payment-internal";
+import { createSettledPaymentHeaders } from "@/lib/agent/payment-internal";
 import { AGENT_SERVICE } from "@/lib/agent/service";
 import { securityLog } from "@/lib/security/logger";
 
@@ -183,6 +183,14 @@ function createOfficialProxy() {
         : result.success === false && !["pending", "timeout"].includes(result.status ?? "")
           ? "failed"
           : "unknown";
+    if (settlementStatus === "settled") {
+      securityLog("settlement_success", {
+        request_id: context.requestId,
+        provider: config.provider,
+        network: result.network,
+        transaction_hash: result.transaction,
+      });
+    }
     try {
       const settledAt = new Date().toISOString();
       await updatePaymentSettlement(context.requestId, {
@@ -341,8 +349,11 @@ function continueWithVerifiedPayment(
   replayKey: string,
   paymentResponse: NextResponse,
 ): NextResponse {
-  const headers = new Headers(request.headers);
-  headers.set(INTERNAL_PAYMENT_KEY_HEADER, replayKey);
+  const context = requiredReservedContext();
+  const headers = createSettledPaymentHeaders(request.headers, {
+    replayKey,
+    requestId: context.requestId,
+  });
   const next = NextResponse.next({ request: { headers } });
   const settlementReceipt = paymentResponse.headers.get("payment-response");
   if (settlementReceipt) next.headers.set("payment-response", settlementReceipt);

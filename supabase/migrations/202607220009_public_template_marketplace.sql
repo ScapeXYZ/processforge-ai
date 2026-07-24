@@ -11,12 +11,12 @@ create table if not exists public.marketplace_creator_profiles (
 );
 create table if not exists public.sop_templates (
   id uuid primary key default gen_random_uuid(), creator_id uuid not null references auth.users(id) on delete cascade,
-  source_sop_id uuid references public.sops(id) on delete set null, title text not null check(char_length(trim(title)) between 3 and 140),
+  A uuid references public.sops(id) on delete set null, title text not null check(char_length(trim(title)) between 3 and 140),
   slug text not null unique check(slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'), summary text not null check(char_length(trim(summary)) between 20 and 300),
   description text not null check(char_length(trim(description)) between 20 and 4000), industry text, department text,
   category_id uuid references public.template_categories(id) on delete set null, template_content jsonb not null, preview_content text not null check(char_length(preview_content)<=5000),
   visibility text not null default 'public' check(visibility in('public','unlisted','private')),
-  publication_status text not null default 'draft' check(publication_status in('draft','published','unpublished','archived')),
+  publication_status text null default 'draft' check(publication_status in('draft','published','unpublished','archived')),
   moderation_status text not null default 'draft' check(moderation_status in('draft','pending_review','approved','rejected','archived')),
   version text not null default '1.0', compliance_framework text, risk_level text check(risk_level is null or risk_level in('critical','high','medium','low')),
   is_free boolean not null default true, paid_ready boolean not null default false, usage_count integer not null default 0 check(usage_count>=0),
