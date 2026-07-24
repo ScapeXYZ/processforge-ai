@@ -14,7 +14,7 @@ import {
   updatePaymentSettlement,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
-import { createSettledPaymentHeaders } from "@/lib/agent/payment-internal";
+import { buildSettledRequestHeaders } from "@/lib/agent/payment-internal";
 import { AGENT_SERVICE } from "@/lib/agent/service";
 import { securityLog } from "@/lib/security/logger";
 
@@ -350,11 +350,15 @@ function continueWithVerifiedPayment(
   paymentResponse: NextResponse,
 ): NextResponse {
   const context = requiredReservedContext();
-  const headers = createSettledPaymentHeaders(request.headers, {
+  const forwardedHeaders = buildSettledRequestHeaders(request.headers, {
     replayKey,
     requestId: context.requestId,
   });
-  const next = NextResponse.next({ request: { headers } });
+  const next = NextResponse.next({
+    request: {
+      headers: forwardedHeaders,
+    },
+  });
   const settlementReceipt = paymentResponse.headers.get("payment-response");
   if (settlementReceipt) next.headers.set("payment-response", settlementReceipt);
   return next;
