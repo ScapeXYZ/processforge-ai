@@ -163,7 +163,7 @@ test("middleware matches the exact paid route and route has no duplicate payment
   assert.match(middlewareSource, /extractVerifiedPaymentIdentity/);
   assert.match(
     identitySource,
-    /const nonce = nonEmptyString\(authorization\?\.nonce\)/,
+    /const paymentSignatureHash = createHash\("sha256"\)\.update\(signature\)\.digest\("hex"\)/,
   );
   assert.match(middlewareSource, /x-idempotent-replay/);
   assert.match(routeSource, /route_handler_entered/);

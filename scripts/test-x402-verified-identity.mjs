@@ -36,17 +36,27 @@ const paymentPayload = {
   },
 };
 
-test("official verification result without a top-level payer derives the payer from authorization", () => {
+test("verified payer derives identity without a payment ID or nonce", () => {
+  const payloadWithoutNonce = {
+    ...paymentPayload,
+    payload: {
+      signature: paymentPayload.payload.signature,
+      authorization: {
+        from: payer,
+        to: payTo,
+        value: "10000",
+      },
+    },
+  };
   const identity = extractVerifiedPaymentIdentity({
-    paymentPayload,
+    paymentPayload: payloadWithoutNonce,
     requirements,
-    result: { isValid: true },
+    result: { isValid: true, payer },
     resource,
   });
 
   assert.ok(identity);
   assert.equal(identity.payer, payer);
-  assert.equal(identity.nonce, nonce);
   assert.equal(identity.network, "eip155:196");
   assert.equal(identity.amount, "10000");
 });
@@ -98,23 +108,48 @@ test("raw verification telemetry contains names and booleans only", () => {
   assert.doesNotMatch(serialized, /pay_secret_value/);
 });
 
-test("identity is stable across supported verification results with and without payer", () => {
-  const withoutPayer = extractVerifiedPaymentIdentity({
+test("verified signature hash produces a deterministic replay identity", () => {
+  const first = extractVerifiedPaymentIdentity({
     paymentPayload,
     requirements,
-    result: { isValid: true },
+    result: { isValid: true, payer },
     resource,
   });
-  const withPayer = extractVerifiedPaymentIdentity({
+  const repeatedReplay = extractVerifiedPaymentIdentity({
     paymentPayload,
     requirements,
-    result: { isValid: true, payer: payer.toUpperCase() },
+    result: { isValid: true, payer },
     resource,
   });
 
-  assert.ok(withoutPayer);
-  assert.ok(withPayer);
-  assert.equal(withPayer.replayKey, withoutPayer.replayKey);
+  assert.ok(first);
+  assert.ok(repeatedReplay);
+  assert.equal(repeatedReplay.replayKey, first.replayKey);
+});
+
+test("different verified signatures produce different replay identities", () => {
+  const first = extractVerifiedPaymentIdentity({
+    paymentPayload,
+    requirements,
+    result: { isValid: true, payer },
+    resource,
+  });
+  const second = extractVerifiedPaymentIdentity({
+    paymentPayload: {
+      ...paymentPayload,
+      payload: {
+        ...paymentPayload.payload,
+        signature: `0x${"56".repeat(65)}`,
+      },
+    },
+    requirements,
+    result: { isValid: true, payer },
+    resource,
+  });
+
+  assert.ok(first);
+  assert.ok(second);
+  assert.notEqual(second.replayKey, first.replayKey);
 });
 
 test("safe verification logging exposes keys but no signature or authorization values", () => {
@@ -136,10 +171,10 @@ test("malformed verification result is rejected", () => {
     extractVerifiedPaymentIdentity({
       paymentPayload: {
         ...paymentPayload,
-        payload: { signature: paymentPayload.payload.signature, authorization: {} },
+        payload: { authorization: paymentPayload.payload.authorization },
       },
       requirements,
-      result: { isValid: true },
+      result: { isValid: true, payer },
       resource,
     }),
     null,
@@ -148,7 +183,7 @@ test("malformed verification result is rejected", () => {
     extractVerifiedPaymentIdentity({
       paymentPayload,
       requirements,
-      result: { isValid: false },
+      result: { isValid: false, payer },
       resource,
     }),
     null,
@@ -157,7 +192,7 @@ test("malformed verification result is rejected", () => {
 
 test("valid verified replay reaches settlement", async () => {
   let settlementCalls = 0;
-  const result = normalizeOfficialVerificationResult([{ isValid: true }]);
+  const result = normalizeOfficialVerificationResult([{ isValid: true, payer }]);
   assert.ok(result);
   const identity = extractVerifiedPaymentIdentity({
     paymentPayload,

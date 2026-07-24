@@ -68,7 +68,6 @@ export type VerifiedPaymentIdentity = {
   amount: string;
   payTo: string;
   resource: string;
-  nonce: string;
 };
 
 export function extractVerifiedPaymentIdentity(input: {
@@ -80,14 +79,11 @@ export function extractVerifiedPaymentIdentity(input: {
   const { paymentPayload, requirements, result, resource } = input;
   if (result.isValid !== true) return null;
 
-  const authorization = paymentAuthorization(paymentPayload);
-  const authorizationPayer = nonEmptyString(authorization?.from);
-  const resultPayer = nonEmptyString(result.payer);
-  const nonce = nonEmptyString(authorization?.nonce);
-  if (!authorizationPayer || !nonce) return null;
-  if (resultPayer && normalizeAddress(resultPayer) !== normalizeAddress(authorizationPayer)) {
-    return null;
-  }
+  const payer = nonEmptyString(result.payer);
+  const payload = asRecord(paymentPayload.payload);
+  const signature = nonEmptyString(payload?.signature);
+  if (!payer || !signature) return null;
+  const paymentSignatureHash = createHash("sha256").update(signature).digest("hex");
 
   const network = nonEmptyString(requirements.network);
   const asset = nonEmptyString(requirements.asset);
@@ -95,7 +91,6 @@ export function extractVerifiedPaymentIdentity(input: {
   const payTo = nonEmptyString(requirements.payTo);
   if (!network || !asset || !amount || !payTo || !resource) return null;
 
-  const payer = resultPayer ?? authorizationPayer;
   const identity = {
     x402Version: paymentPayload.x402Version,
     scheme: requirements.scheme,
@@ -105,7 +100,7 @@ export function extractVerifiedPaymentIdentity(input: {
     payTo: normalizeAddress(payTo),
     payer: normalizeAddress(payer),
     resource,
-    nonce,
+    paymentSignatureHash,
   };
 
   return {
@@ -116,7 +111,6 @@ export function extractVerifiedPaymentIdentity(input: {
     amount,
     payTo,
     resource,
-    nonce,
   };
 }
 
