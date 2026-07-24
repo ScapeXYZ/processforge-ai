@@ -28,6 +28,12 @@ export function safeRawVerificationShape(value: unknown): {
   responseKind: "array" | "object" | "other";
   responseKeys: string[];
   itemKeys: string[];
+  verificationKeys: string[];
+  authorizationExists: boolean;
+  authorizationFromExists: boolean;
+  payerExists: boolean;
+  paymentIdExists: boolean;
+  nonceExists: boolean;
 } {
   const root = Array.isArray(value) ? null : asRecord(value);
   const data = root?.data;
@@ -35,10 +41,22 @@ export function safeRawVerificationShape(value: unknown): {
     Array.isArray(value) ? asRecord(value[0])
       : Array.isArray(data) ? asRecord(data[0])
         : null;
+  const verification = item ?? root;
+  const authorization = asRecord(verification?.authorization);
   return {
     responseKind: Array.isArray(value) ? "array" : root ? "object" : "other",
     responseKeys: safeKeys(root),
     itemKeys: safeKeys(item),
+    verificationKeys: safeKeys(verification),
+    authorizationExists: authorization !== null,
+    authorizationFromExists: Object.hasOwn(authorization ?? {}, "from"),
+    payerExists: Object.hasOwn(verification ?? {}, "payer"),
+    paymentIdExists:
+      Object.hasOwn(verification ?? {}, "paymentId")
+      || Object.hasOwn(verification ?? {}, "payment_id"),
+    nonceExists:
+      Object.hasOwn(verification ?? {}, "nonce")
+      || Object.hasOwn(authorization ?? {}, "nonce"),
   };
 }
 

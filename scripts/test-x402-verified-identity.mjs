@@ -63,7 +63,39 @@ test("official array and object verification response shapes normalize identical
     responseKind: "array",
     responseKeys: [],
     itemKeys: ["isValid", "payer"],
+    verificationKeys: ["isValid", "payer"],
+    authorizationExists: false,
+    authorizationFromExists: false,
+    payerExists: true,
+    paymentIdExists: false,
+    nonceExists: false,
   });
+});
+
+test("raw verification telemetry contains names and booleans only", () => {
+  const authorization = { from: payer, nonce };
+  const shape = safeRawVerificationShape({
+    isValid: true,
+    authorization,
+    payer,
+    paymentId: "pay_secret_value",
+  });
+  const serialized = JSON.stringify(shape);
+
+  assert.deepEqual(shape.verificationKeys, [
+    "authorization",
+    "isValid",
+    "payer",
+    "paymentId",
+  ]);
+  assert.equal(shape.authorizationExists, true);
+  assert.equal(shape.authorizationFromExists, true);
+  assert.equal(shape.payerExists, true);
+  assert.equal(shape.paymentIdExists, true);
+  assert.equal(shape.nonceExists, true);
+  assert.doesNotMatch(serialized, new RegExp(payer, "i"));
+  assert.doesNotMatch(serialized, new RegExp(nonce, "i"));
+  assert.doesNotMatch(serialized, /pay_secret_value/);
 });
 
 test("identity is stable across supported verification results with and without payer", () => {

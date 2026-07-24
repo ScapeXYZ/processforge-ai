@@ -33,6 +33,12 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
       response_kind: shape.responseKind,
       response_keys: shape.responseKeys,
       item_keys: shape.itemKeys,
+      verification_keys: shape.verificationKeys,
+      authorization_exists: shape.authorizationExists,
+      authorization_from_exists: shape.authorizationFromExists,
+      payer_exists: shape.payerExists,
+      payment_id_exists: shape.paymentIdExists,
+      nonce_exists: shape.nonceExists,
     });
     const normalized = normalizeOfficialVerificationResult(raw);
     if (!normalized) throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
