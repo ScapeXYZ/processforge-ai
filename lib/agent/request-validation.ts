@@ -17,16 +17,12 @@ export type InvalidAgentRequest = {
   details?: Array<{ path: string; message: string }>;
 };
 
-export async function validateAgentRequest(request: Request): Promise<ValidAgentRequest | InvalidAgentRequest> {
-  const declaredLength = Number(request.headers.get("content-length") || 0);
+export function validateAgentRequestBody(
+  raw: string,
+  declaredLength = 0,
+): ValidAgentRequest | InvalidAgentRequest {
   if (declaredLength > MAX_BODY_BYTES) {
     return { ok: false, status: 413, code: "INVALID_REQUEST", message: "Request body is too large." };
-  }
-  let raw: string;
-  try {
-    raw = await request.text();
-  } catch {
-    return { ok: false, status: 400, code: "INVALID_REQUEST", message: "Request body could not be read." };
   }
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     return { ok: false, status: 413, code: "INVALID_REQUEST", message: "Request body is too large." };
@@ -36,6 +32,17 @@ export async function validateAgentRequest(request: Request): Promise<ValidAgent
     json = JSON.parse(raw);
   } catch {
     return { ok: false, status: 400, code: "INVALID_REQUEST", message: "Request body must be valid JSON." };
+  }
+  return validateAgentRequestPayload(raw, json, declaredLength);
+}
+
+export function validateAgentRequestPayload(
+  raw: string,
+  json: unknown,
+  declaredLength = 0,
+): ValidAgentRequest | InvalidAgentRequest {
+  if (declaredLength > MAX_BODY_BYTES || new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
+    return { ok: false, status: 413, code: "INVALID_REQUEST", message: "Request body is too large." };
   }
   const parsed = agentSopRequestSchema.safeParse(json);
   if (!parsed.success) {
@@ -52,4 +59,17 @@ export async function validateAgentRequest(request: Request): Promise<ValidAgent
   }
   const requestHash = createHash("sha256").update(raw).digest("hex");
   return { ok: true, input: parsed.data, requestHash };
+}
+
+export async function validateAgentRequest(request: Request): Promise<ValidAgentRequest | InvalidAgentRequest> {
+  let raw: string;
+  try {
+    raw = await request.text();
+  } catch {
+    return { ok: false, status: 400, code: "INVALID_REQUEST", message: "Request body could not be read." };
+  }
+  return validateAgentRequestBody(
+    raw,
+    Number(request.headers.get("content-length") || 0),
+  );
 }

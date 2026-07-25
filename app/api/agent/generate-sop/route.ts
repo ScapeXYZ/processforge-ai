@@ -2,14 +2,16 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { agentError } from "@/lib/agent/contract";
 import { generateAgentSop } from "@/lib/agent/generate";
-import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
+import {
+  runOfficialPaymentGate,
+  type OfficialPaymentGateResult,
+} from "@/lib/agent/official-x402-middleware";
 import {
   recordUsage,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
-import { readSettledPaymentHandoff } from "@/lib/agent/payment-internal";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
-import { validateAgentRequest } from "@/lib/agent/request-validation";
+import { validateAgentRequestPayload } from "@/lib/agent/request-validation";
 import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
 import { securityLog } from "@/lib/security/logger";
 
@@ -23,62 +25,67 @@ export async function GET() {
 export async function POST(request: Request) {
   const startedAt = Date.now();
   const fallbackRequestId = randomUUID();
-  const handoff = readSettledPaymentHandoff(request.headers);
-  const requestId = handoff?.requestId ?? fallbackRequestId;
   securityLog("route_handler_entered", {
-    request_id: requestId,
+    request_id: fallbackRequestId,
     route: "/api/agent/generate-sop",
-    settled_payment: Boolean(handoff),
+    settled_payment: false,
   });
-  const config = getOfficialPaymentConfig();
-  if (config.requested && !config.ready) {
-    return agentError("PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable.", 503, fallbackRequestId);
-  }
-  if (!config.enabled) {
-    return agentError("SERVICE_BUSY", "Paid SOP generation is disabled.", 503, fallbackRequestId);
-  }
 
-  const validated = await validateAgentRequest(request);
+  let bodyText: string;
+  try {
+    bodyText = await request.text();
+  } catch {
+    return agentError("INVALID_REQUEST", "Request body could not be read.", 400, fallbackRequestId);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(bodyText);
+  } catch {
+    return agentError("INVALID_REQUEST", "Request body must be valid JSON.", 400, fallbackRequestId);
+  }
+  const validated = validateAgentRequestPayload(
+    bodyText,
+    payload,
+    Number(request.headers.get("content-length") || 0),
+  );
   if (!validated.ok) {
-    if (handoff) {
-      await updateAgentRequest(requestId, {
-        status: "failed",
-        error_code: "INVALID_REQUEST",
-      });
-    }
     return Response.json({
       error: {
         code: validated.code,
         message: validated.message,
         ...(validated.details ? { details: validated.details } : {}),
-        request_id: requestId,
-        ...(handoff ? { payment_status: "settled_recoverable" } : {}),
+        request_id: fallbackRequestId,
       },
     }, { status: validated.status });
   }
 
-  if (handoff) {
-    await updateAgentRequest(requestId, { status: "processing", error_code: null });
+  const paymentResult = await runOfficialPaymentGate(request, bodyText);
+  if (paymentResult.type === "response") {
+    return paymentResult.response;
   }
+  const requestId = paymentResult.requestId;
+  const finalize = (response: Response) => withPaymentReceipt(response, paymentResult);
+  securityLog("route_handler_entered", {
+    request_id: requestId,
+    route: "/api/agent/generate-sop",
+    settled_payment: true,
+  });
+  await updateAgentRequest(requestId, { status: "processing", error_code: null });
 
   const clientKey = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
   const rate = checkAgentRateLimit(clientKey);
   if (!rate.allowed) {
-    if (handoff) {
-      await updateAgentRequest(requestId, { status: "paid", error_code: "RATE_LIMITED" });
-    }
-    return Response.json(
+    await updateAgentRequest(requestId, { status: "paid", error_code: "RATE_LIMITED" });
+    return finalize(Response.json(
       { error: { code: "RATE_LIMITED", message: "Too many requests. Retry later; payment will not be charged again.", request_id: requestId } },
       { status: 429, headers: { "retry-after": String(rate.retryAfter) } },
-    );
+    ));
   }
 
   const release = acquireGenerationSlot();
   if (!release) {
-    if (handoff) {
-      await updateAgentRequest(requestId, { status: "paid", error_code: "SERVICE_BUSY" });
-    }
-    return agentError("SERVICE_BUSY", "Generation capacity is busy. Retry the same paid request later.", 503, requestId);
+    await updateAgentRequest(requestId, { status: "paid", error_code: "SERVICE_BUSY" });
+    return finalize(agentError("SERVICE_BUSY", "Generation capacity is busy. Retry the same paid request later.", 503, requestId));
   }
   try {
     securityLog("generation_started", { request_id: requestId, route: "/api/agent/generate-sop" });
@@ -94,20 +101,18 @@ export async function POST(request: Request) {
       processing_time_ms: duration,
       schema_version: AGENT_SCHEMA_VERSION,
     };
-    if (handoff) {
-      await updateAgentRequest(requestId, {
-        status: "completed",
-        response_payload: response,
-        processing_time_ms: duration,
-        completed_at: completedAt,
-      });
-      await recordUsage({
-        request_id: requestId,
-        service: AGENT_SERVICE,
-        outcome: "success",
-        processing_time_ms: duration,
-      });
-    }
+    await updateAgentRequest(requestId, {
+      status: "completed",
+      response_payload: response,
+      processing_time_ms: duration,
+      completed_at: completedAt,
+    });
+    await recordUsage({
+      request_id: requestId,
+      service: AGENT_SERVICE,
+      outcome: "success",
+      processing_time_ms: duration,
+    });
     securityLog("generation_completed", {
       request_id: requestId,
       route: "/api/agent/generate-sop",
@@ -119,26 +124,24 @@ export async function POST(request: Request) {
       http_status: 200,
       sop_present: true,
     });
-    return Response.json(response, { headers: { "cache-control": "no-store" } });
+    return finalize(Response.json(response, { headers: { "cache-control": "no-store" } }));
   } catch (error) {
     const timeout = error instanceof OpenAI.APIConnectionTimeoutError;
     const code = timeout ? "AI_TIMEOUT" : "GENERATION_FAILED";
     const duration = Date.now() - startedAt;
-    if (handoff) {
-      await updateAgentRequest(requestId, {
-        status: "failed",
-        error_code: code,
-        processing_time_ms: duration,
-        completed_at: new Date().toISOString(),
-      });
-      await recordUsage({
-        request_id: requestId,
-        service: AGENT_SERVICE,
-        outcome: "failed",
-        error_code: code,
-        processing_time_ms: duration,
-      });
-    }
+    await updateAgentRequest(requestId, {
+      status: "failed",
+      error_code: code,
+      processing_time_ms: duration,
+      completed_at: new Date().toISOString(),
+    });
+    await recordUsage({
+      request_id: requestId,
+      service: AGENT_SERVICE,
+      outcome: "failed",
+      error_code: code,
+      processing_time_ms: duration,
+    });
     securityLog("generation_failed", {
       request_id: requestId,
       route: "/api/agent/generate-sop",
@@ -151,13 +154,23 @@ export async function POST(request: Request) {
       http_status: timeout ? 504 : 502,
       sop_present: false,
     });
-    return agentError(
+    return finalize(agentError(
       code,
       timeout ? "SOP generation timed out. Retry the same paid request." : "SOP generation failed. Retry the same paid request.",
       timeout ? 504 : 502,
       requestId,
-    );
+    ));
   } finally {
     release();
   }
+}
+
+function withPaymentReceipt(
+  response: Response,
+  payment: Extract<OfficialPaymentGateResult, { type: "verified" }>,
+): Response {
+  if (payment.paymentResponseHeader) {
+    response.headers.set("payment-response", payment.paymentResponseHeader);
+  }
+  return response;
 }

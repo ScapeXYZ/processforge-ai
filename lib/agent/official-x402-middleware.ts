@@ -1,5 +1,6 @@
 import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
 import type { PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
@@ -13,12 +14,6 @@ import {
   updatePaymentSettlement,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
-import { buildSettledRequestHeaders } from "@/lib/agent/payment-internal";
-import {
-  paidProxyRequestInit,
-  paidRequestBodyHash,
-  preservePaidRequestBody,
-} from "@/lib/agent/paid-request-body";
 import { AGENT_SERVICE, PRODUCTION_ORIGIN } from "@/lib/agent/service";
 import {
   extractVerifiedPaymentIdentity,
@@ -45,22 +40,44 @@ const PAYMENT_ROUTE = "/api/agent/generate-sop";
 const requestContext = new AsyncLocalStorage<PaymentRequestContext>();
 let cachedProxy: ((request: NextRequest) => Promise<NextResponse>) | undefined;
 
-export async function runOfficialPaymentMiddleware(request: NextRequest): Promise<NextResponse | null> {
-  if (request.method !== "POST" || request.nextUrl.pathname !== "/api/agent/generate-sop") return null;
+export type OfficialPaymentGateResult =
+  | { type: "response"; response: Response }
+  | {
+    type: "verified";
+    requestId: string;
+    replayKey: string;
+    paymentResponseHeader?: string;
+  };
+
+export async function runOfficialPaymentGate(
+  request: Request,
+  bodyText: string,
+): Promise<OfficialPaymentGateResult> {
   const config = getOfficialPaymentConfig();
   if (config.requested && !config.ready) {
-    return jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable.");
+    return {
+      type: "response",
+      response: jsonError(503, "PAYMENT_CONFIGURATION_ERROR", "Official payment processing is unavailable."),
+    };
   }
-  if (!config.enabled) return null;
+  if (!config.enabled) {
+    return {
+      type: "response",
+      response: jsonError(503, "SERVICE_BUSY", "Paid SOP generation is disabled."),
+    };
+  }
 
   const paymentSignaturePresent = request.headers.has("payment-signature");
   const xPaymentHeaderPresent = request.headers.has("x-payment");
   const proxy = cachedProxy ??= createOfficialProxy();
+  const paymentHeaders = new Headers(request.headers);
+  paymentHeaders.set("content-type", "application/json");
+  const paymentRequest = new NextRequest(request.url, {
+    method: "POST",
+    headers: paymentHeaders,
+    body: bodyText,
+  });
 
-  // Unpaid probes must reach the official x402 wrapper before any business-body
-  // validation so every POST probe receives the standards-compliant 402 offer.
-  // Proof-bearing retries are validated below before verification/settlement,
-  // which prevents malformed requests from consuming a payment.
   if (!paymentSignaturePresent && !xPaymentHeaderPresent) {
     const challengeContext: PaymentRequestContext = {
       requestId: null,
@@ -69,59 +86,71 @@ export async function runOfficialPaymentMiddleware(request: NextRequest): Promis
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
     };
-    const response = await requestContext.run(challengeContext, () => proxy(request));
+    const response = await requestContext.run(challengeContext, () => proxy(paymentRequest));
     logMiddlewareResult(challengeContext, response.status);
-    return response;
+    return { type: "response", response };
   }
 
-  const originalBody = await preservePaidRequestBody(request);
-  const proxyRequest = new NextRequest(
-    request.url,
-    paidProxyRequestInit(request, originalBody),
-  );
   const paidContext: PaymentRequestContext = {
     requestId: null,
-    requestHash: paidRequestBodyHash(originalBody),
+    requestHash: createHash("sha256").update(bodyText).digest("hex"),
     paymentSignaturePresent,
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
   };
-  const response = await requestContext.run(paidContext, () => proxy(proxyRequest));
+  const response = await requestContext.run(paidContext, () => proxy(paymentRequest));
 
   if (paidContext.replayDecision === "completed" && paidContext.storedResponse) {
     logMiddlewareResult(paidContext, 200);
-    return NextResponse.json(paidContext.storedResponse, {
-      headers: { "cache-control": "no-store", "x-idempotent-replay": "true" },
-    });
+    return {
+      type: "response",
+      response: NextResponse.json(paidContext.storedResponse, {
+        headers: { "cache-control": "no-store", "x-idempotent-replay": "true" },
+      }),
+    };
   }
   if (paidContext.replayDecision === "conflict") {
-    return jsonError(
-      409,
-      "PAYMENT_REPLAY_CONFLICT",
-      "This verified payment authorization is already associated with different request content.",
-      paidContext.requestId,
-    );
+    return {
+      type: "response",
+      response: jsonError(
+        409,
+        "PAYMENT_REPLAY_CONFLICT",
+        "This verified payment authorization is already associated with different request content.",
+        paidContext.requestId,
+      ),
+    };
   }
   if (paidContext.replayDecision === "busy") {
-    return jsonError(
-      409,
-      "REQUEST_IN_PROGRESS",
-      "This verified payment is already settling or processing. Retry the same request later.",
-      paidContext.requestId,
-    );
+    return {
+      type: "response",
+      response: jsonError(
+        409,
+        "REQUEST_IN_PROGRESS",
+        "This verified payment is already settling or processing. Retry the same request later.",
+        paidContext.requestId,
+      ),
+    };
   }
   if (
-    paidContext.paymentReference
+    paidContext.requestId
+    && paidContext.paymentReference
     && (paidContext.replayDecision === "resume" || paidContext.middlewareResult === "settled")
   ) {
     logMiddlewareResult(paidContext, 200);
-    return continueWithVerifiedPayment(request, paidContext.paymentReference, response);
+    return {
+      type: "verified",
+      requestId: paidContext.requestId,
+      replayKey: paidContext.paymentReference,
+      ...(response.headers.get("payment-response")
+        ? { paymentResponseHeader: response.headers.get("payment-response")! }
+        : {}),
+    };
   }
   if (response.status === 402) {
     paidContext.middlewareResult = "rejected";
   }
   logMiddlewareResult(paidContext, response.status);
-  return response;
+  return { type: "response", response };
 }
 
 function createOfficialProxy() {
@@ -350,26 +379,6 @@ function requiredReservedContext(): PaymentRequestContext & { requestId: string;
   const context = requiredPaymentContext();
   if (!context.requestId || !context.paymentReference) throw new Error("PAYMENT_RESERVATION_CONTEXT_MISSING");
   return { ...context, requestId: context.requestId, paymentReference: context.paymentReference };
-}
-
-function continueWithVerifiedPayment(
-  request: NextRequest,
-  replayKey: string,
-  paymentResponse: NextResponse,
-): NextResponse {
-  const context = requiredReservedContext();
-  const forwardedHeaders = buildSettledRequestHeaders(request.headers, {
-    replayKey,
-    requestId: context.requestId,
-  });
-  const next = NextResponse.next({
-    request: {
-      headers: forwardedHeaders,
-    },
-  });
-  const settlementReceipt = paymentResponse.headers.get("payment-response");
-  if (settlementReceipt) next.headers.set("payment-response", settlementReceipt);
-  return next;
 }
 
 function safeOfficialError(error: unknown): { code: string; message: string } {

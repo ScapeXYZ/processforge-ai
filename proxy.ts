@@ -1,10 +1,7 @@
 import type { NextRequest } from "next/server";
-import { runOfficialPaymentMiddleware } from "@/lib/agent/official-x402-middleware";
 import { updateSession } from "@/lib/supabase/middleware";
 
 export async function proxy(request: NextRequest) {
-  const paymentResponse = await runOfficialPaymentMiddleware(request);
-  if (paymentResponse) return paymentResponse;
   return updateSession(request);
 }
 
