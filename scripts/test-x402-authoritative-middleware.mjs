@@ -193,7 +193,9 @@ test("duplicate paid replay returns stored HTTP 200 and generates once", async (
 
 test("payment gate remains official, synchronous, reserved, and production-bound", () => {
   assert.match(paymentGateSource, /runOfficialPaymentGate/);
-  assert.match(paymentGateSource, /paymentProxy/);
+  assert.match(paymentGateSource, /withX402/);
+  assert.doesNotMatch(paymentGateSource, /paymentProxy/);
+  assert.doesNotMatch(paymentGateSource, /NextResponse\.next/);
   assert.match(paymentGateSource, /syncSettle: true/);
   assert.match(paymentGateSource, /reserveVerifiedPaymentAtomic/);
   assert.match(paymentGateSource, /extractVerifiedPaymentIdentity/);

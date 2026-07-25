@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { x402ResourceServer } from "@okxweb3/x402-core/server";
 import type { PaymentRequirements } from "@okxweb3/x402-core/types";
 import { ExactEvmScheme } from "@okxweb3/x402-evm/exact/server";
-import { paymentProxy } from "@okxweb3/x402-next";
+import { withX402 } from "@okxweb3/x402-next";
 import { NextRequest, NextResponse } from "next/server";
 import { getAppBaseUrl } from "@/lib/env/server";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
@@ -38,7 +38,7 @@ type PaymentRequestContext = {
 
 const PAYMENT_ROUTE = "/api/agent/generate-sop";
 const requestContext = new AsyncLocalStorage<PaymentRequestContext>();
-let cachedProxy: ((request: NextRequest) => Promise<NextResponse>) | undefined;
+let cachedRouteGate: ((request: NextRequest) => Promise<NextResponse>) | undefined;
 
 export type OfficialPaymentGateResult =
   | { type: "response"; response: Response }
@@ -69,7 +69,7 @@ export async function runOfficialPaymentGate(
 
   const paymentSignaturePresent = request.headers.has("payment-signature");
   const xPaymentHeaderPresent = request.headers.has("x-payment");
-  const proxy = cachedProxy ??= createOfficialProxy();
+  const routeGate = cachedRouteGate ??= createOfficialRouteGate();
   const paymentHeaders = new Headers(request.headers);
   paymentHeaders.set("content-type", "application/json");
   const paymentRequest = new NextRequest(request.url, {
@@ -86,7 +86,7 @@ export async function runOfficialPaymentGate(
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
     };
-    const response = await requestContext.run(challengeContext, () => proxy(paymentRequest));
+    const response = await requestContext.run(challengeContext, () => routeGate(paymentRequest));
     logMiddlewareResult(challengeContext, response.status);
     return { type: "response", response };
   }
@@ -98,7 +98,7 @@ export async function runOfficialPaymentGate(
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
   };
-  const response = await requestContext.run(paidContext, () => proxy(paymentRequest));
+  const response = await requestContext.run(paidContext, () => routeGate(paymentRequest));
 
   if (paidContext.replayDecision === "completed" && paidContext.storedResponse) {
     logMiddlewareResult(paidContext, 200);
@@ -153,7 +153,7 @@ export async function runOfficialPaymentGate(
   return { type: "response", response };
 }
 
-function createOfficialProxy() {
+function createOfficialRouteGate() {
   const config = getOfficialPaymentConfig();
   if (!config.ready) throw new Error("OFFICIAL_PAYMENT_NOT_READY");
   const facilitator = new LoggedOKXFacilitatorClient({
@@ -316,9 +316,10 @@ function createOfficialProxy() {
     }
   });
 
-  const resource = `${paymentResourceOrigin()}/api/agent/generate-sop`;
-  return paymentProxy({
-    "POST /api/agent/generate-sop": {
+  const resource = `${paymentResourceOrigin()}${PAYMENT_ROUTE}`;
+  return withX402(
+    async () => NextResponse.json({ payment_verified: true }),
+    {
       accepts: {
         scheme: "exact",
         network: config.network,
@@ -354,7 +355,11 @@ function createOfficialProxy() {
         },
       }),
     },
-  }, server, undefined, undefined, true);
+    server,
+    undefined,
+    undefined,
+    true,
+  );
 }
 
 // The resource URL is embedded in the 402 challenge and used to build the
