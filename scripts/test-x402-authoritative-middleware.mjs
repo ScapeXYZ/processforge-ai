@@ -157,7 +157,9 @@ test("valid paid POST returns HTTP 200 with SOP and reads body exactly once", as
 
   assert.equal(result.response.status, 200);
   assert.equal(result.bodyReadCount, 1);
-  assert.equal((await result.response.json()).sop.title, validRequestBody.title);
+  const body = await result.response.json();
+  assert.equal(body.sop.title, validRequestBody.title);
+  assert.notDeepEqual(body, { payment_verified: true });
   assert.equal(endpoint.generationCount, 1);
 });
 
@@ -226,6 +228,15 @@ test("payment gate remains official, synchronous, reserved, and production-bound
   assert.match(paymentGateSource, /withX402/);
   assert.doesNotMatch(paymentGateSource, /paymentProxy/);
   assert.doesNotMatch(paymentGateSource, /NextResponse\.next/);
+  assert.doesNotMatch(paymentGateSource, /payment_verified/);
+  assert.match(paymentGateSource, /async \(\) => new NextResponse\(null, \{ status: 204 \}\)/);
+  assert.match(
+    paymentGateSource,
+    /return context as PaymentRequestContext & \{ requestId: string; paymentReference: string \}/,
+  );
+  assert.match(paymentGateSource, /paidContext\.replayDecision === "new"/);
+  assert.match(paymentGateSource, /paidContext\.middlewareResult === "settled"/);
+  assert.match(paymentGateSource, /PAYMENT_SETTLEMENT_INCOMPLETE/);
   assert.equal(
     (paymentGateSource.match(/ensureRouteHandlerResponse\(gateResponse,/g) ?? []).length,
     2,

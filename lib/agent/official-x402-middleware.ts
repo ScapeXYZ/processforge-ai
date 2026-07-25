@@ -137,7 +137,13 @@ export async function runOfficialPaymentGate(
   if (
     paidContext.requestId
     && paidContext.paymentReference
-    && (paidContext.replayDecision === "resume" || paidContext.middlewareResult === "settled")
+    && (
+      paidContext.replayDecision === "resume"
+      || (
+        paidContext.replayDecision === "new"
+        && paidContext.middlewareResult === "settled"
+      )
+    )
   ) {
     logMiddlewareResult(paidContext, 200);
     return {
@@ -151,6 +157,19 @@ export async function runOfficialPaymentGate(
   }
   if (response.status === 402) {
     paidContext.middlewareResult = "rejected";
+  }
+  if (response.ok) {
+    paidContext.middlewareResult = "rejected";
+    logMiddlewareResult(paidContext, 502);
+    return {
+      type: "response",
+      response: jsonError(
+        502,
+        "PAYMENT_SETTLEMENT_INCOMPLETE",
+        "Payment settlement did not complete.",
+        paidContext.requestId,
+      ),
+    };
   }
   logMiddlewareResult(paidContext, response.status);
   return { type: "response", response };
@@ -321,7 +340,7 @@ function createOfficialRouteGate() {
 
   const resource = `${paymentResourceOrigin()}${PAYMENT_ROUTE}`;
   return withX402(
-    async () => NextResponse.json({ payment_verified: true }),
+    async () => new NextResponse(null, { status: 204 }),
     {
       accepts: {
         scheme: "exact",
@@ -386,7 +405,7 @@ function requiredPaymentContext(): PaymentRequestContext {
 function requiredReservedContext(): PaymentRequestContext & { requestId: string; paymentReference: string } {
   const context = requiredPaymentContext();
   if (!context.requestId || !context.paymentReference) throw new Error("PAYMENT_RESERVATION_CONTEXT_MISSING");
-  return { ...context, requestId: context.requestId, paymentReference: context.paymentReference };
+  return context as PaymentRequestContext & { requestId: string; paymentReference: string };
 }
 
 function safeOfficialError(error: unknown): { code: string; message: string } {
