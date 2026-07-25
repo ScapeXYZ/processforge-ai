@@ -41,6 +41,18 @@ export async function POST(request: Request) {
   } catch {
     return agentError("INVALID_REQUEST", "Request body could not be read.", 400, fallbackRequestId);
   }
+
+  const paymentResult = await runOfficialPaymentGate(request, bodyText);
+  if (paymentResult.type === "response") {
+    if (isNextContinuationResponse(paymentResult.response)) {
+      securityLog("route_continuation_rejected", {
+        request_id: fallbackRequestId,
+        route: "/api/agent/generate-sop",
+        http_status: paymentResult.response.status,
+      });
+    }
+    return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
+  }
   let payload: unknown;
   try {
     payload = JSON.parse(bodyText);
@@ -61,18 +73,6 @@ export async function POST(request: Request) {
         request_id: fallbackRequestId,
       },
     }, { status: validated.status });
-  }
-
-  const paymentResult = await runOfficialPaymentGate(request, bodyText);
-  if (paymentResult.type === "response") {
-    if (isNextContinuationResponse(paymentResult.response)) {
-      securityLog("route_continuation_rejected", {
-        request_id: fallbackRequestId,
-        route: "/api/agent/generate-sop",
-        http_status: paymentResult.response.status,
-      });
-    }
-    return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
   }
   const requestId = paymentResult.requestId;
   const finalize = (response: Response) => withPaymentReceipt(response, paymentResult);
