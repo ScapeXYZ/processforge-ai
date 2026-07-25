@@ -20,6 +20,7 @@ import {
   safeVerificationShape,
 } from "@/lib/agent/verified-payment-identity";
 import { ensureRouteHandlerResponse } from "@/lib/http/route-handler-response";
+import { classifySettlement } from "@/lib/agent/settlement-classification";
 import { securityLog } from "@/lib/security/logger";
 
 type PaymentRequestContext = {
@@ -257,18 +258,13 @@ function createOfficialRouteGate() {
     const context = requiredReservedContext();
     const requirements = context.verifiedRequirements;
     if (!context.paymentReference || !requirements) throw new Error("SETTLEMENT_CONTEXT_MISSING");
-    const settlementStatus =
-      result.status === "success" || (!result.status && result.success)
-        ? "settled"
-        : result.success === false && !["pending", "timeout"].includes(result.status ?? "")
-          ? "failed"
-          : "unknown";
+    const settlementStatus = classifySettlement(result);
     if (settlementStatus === "settled") {
       securityLog("settlement_success", {
         request_id: context.requestId,
         provider: config.provider,
         network: result.network,
-        transaction_hash: result.transaction,
+        transaction_exists: Boolean(result.transaction),
       });
     }
     try {
@@ -297,7 +293,7 @@ function createOfficialRouteGate() {
         request_id: context.requestId,
         provider: config.provider,
         network: result.network,
-        settlement_reference: result.transaction,
+        transaction_exists: Boolean(result.transaction),
         settlement_status: settlementStatus,
       });
     } catch (error) {

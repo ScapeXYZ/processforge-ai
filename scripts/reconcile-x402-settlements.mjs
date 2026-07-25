@@ -1,5 +1,6 @@
 import { OKXFacilitatorClient } from "@okxweb3/x402-core";
 import { createClient } from "@supabase/supabase-js";
+import { classifySettlement } from "../lib/agent/settlement-classification.ts";
 
 const inputs = process.argv.slice(2);
 if (inputs.length === 0) {
@@ -64,12 +65,9 @@ async function transactionForRequest(requestId) {
 async function officialStatus(transactionHash) {
   try {
     const result = await facilitator.getSettleStatus(transactionHash);
-    if (result.status === "success" || (result.success && result.status !== "pending")) {
-      return "completed";
-    }
-    if (result.status === "pending") return "pending";
-    if (result.status === "failed" || result.success === false) return "failed";
-    return "unknown";
+    const classification = classifySettlement(result);
+    if (classification === "settled") return "completed";
+    return classification;
   } catch {
     return "unknown";
   }

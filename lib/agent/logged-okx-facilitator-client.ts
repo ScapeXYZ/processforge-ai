@@ -53,7 +53,17 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
     requirements: PaymentRequirements,
   ): Promise<SettleResponse> {
     try {
-      return await super.settle(payload, requirements);
+      const result = await super.settle(payload, requirements);
+      const shape = asRecord(result);
+      securityLog("payment_settlement_shape", {
+        result_keys: Object.keys(shape).sort().slice(0, 32),
+        success: result.success,
+        status_value: result.status ?? null,
+        transaction_exists: typeof result.transaction === "string" && result.transaction.length > 0,
+        network_exists: typeof result.network === "string" && result.network.length > 0,
+        payer_exists: typeof result.payer === "string" && result.payer.length > 0,
+      });
+      return result;
     } catch (error) {
       const safe = safeSettlementError(error);
       securityLog("payment_settlement_failed", {
@@ -61,8 +71,6 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
         http_status: safe.httpStatus,
         okx_error_code: safe.code,
         okx_error_message: safe.message,
-        settlement_reference: safe.settlementReference,
-        transaction_hash: safe.transactionHash,
         stack: error instanceof Error && error.stack ? scrub(error.stack) : undefined,
       });
       throw error;
@@ -91,13 +99,6 @@ function safeSettlementError(error: unknown) {
         ?? errorMessage
         ?? "The OKX facilitator settlement call failed.",
     ),
-    settlementReference:
-      safeReference(data.settlementReference)
-      ?? safeReference(data.settlement_reference),
-    transactionHash:
-      safeReference(data.transactionHash)
-      ?? safeReference(data.transaction_hash)
-      ?? safeReference(data.txHash),
   };
 }
 
@@ -116,12 +117,6 @@ function statusFromMessage(value: string | undefined): number | undefined {
 
 function safeText(value: unknown): string | undefined {
   return typeof value === "string" ? scrub(value) : undefined;
-}
-
-function safeReference(value: unknown): string | undefined {
-  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value)
-    ? value
-    : undefined;
 }
 
 function scrub(value: string): string {

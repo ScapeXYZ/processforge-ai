@@ -15,6 +15,7 @@
     "test:x402:middleware": "node --test scripts/test-x402-authoritative-middleware.mjs",
     "test:x402:identity": "node --test scripts/test-x402-verified-identity.mjs",
     "test:x402:logger": "node --test scripts/test-security-log-redaction.mjs",
+    "test:x402:settlement": "node --test scripts/test-x402-settlement-classification.mjs",
     "reconcile:x402-settlements": "node scripts/reconcile-x402-settlements.mjs",
     "verify:release": "node scripts/verify-release.mjs",
     "verify:deployment": "node scripts/verify-deployment.mjs",
