@@ -35,7 +35,7 @@ const pricing = metadata.body?.pricing;
 const payment = health.body?.payment_configuration;
 assert(pricing?.enabled === true, `pricing.enabled: expected true, received ${JSON.stringify(pricing?.enabled)}`);
 assert(pricing?.network === NETWORK, `pricing.network: expected ${NETWORK}, received ${JSON.stringify(pricing?.network)}`);
-assert(pricing?.asset === "USDT", `pricing.asset: expected USDT, received ${JSON.stringify(pricing?.asset)}`);
+assert(pricing?.asset === "USD₮0", `pricing.asset: expected USD₮0, received ${JSON.stringify(pricing?.asset)}`);
 assert(pricing?.asset_address?.toLowerCase() === ASSET, `pricing.asset_address: expected ${ASSET}, received ${JSON.stringify(pricing?.asset_address)}`);
 assert(pricing?.asset_decimals === 6, `pricing.asset_decimals: expected 6, received ${JSON.stringify(pricing?.asset_decimals)}`);
 assert(String(pricing?.amount) === AMOUNT, `pricing.amount: expected ${AMOUNT}, received ${JSON.stringify(pricing?.amount)}`);

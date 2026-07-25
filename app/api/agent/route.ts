@@ -25,7 +25,7 @@ function buildPricingMetadata(payment: AgentPaymentStatus, origin: string) {
     scheme: "exact",
     amount: payment.amount,
     amount_format: "atomic_units",
-    asset: payment.asset,
+    asset: "USD₮0",
     asset_address: payment.assetAddress,
     asset_decimals: payment.assetDecimals,
     network: payment.network,
