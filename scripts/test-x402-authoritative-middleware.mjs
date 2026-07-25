@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { agentSopRequestSchema } from "../lib/agent/contract.ts";
+import {
+  ensureRouteHandlerResponse,
+  isNextContinuationResponse,
+} from "../lib/http/route-handler-response.ts";
 
 const paymentGateSource = readFileSync(
   resolve("lib/agent/official-x402-middleware.ts"),
@@ -13,6 +17,10 @@ const routeSource = readFileSync(
   "utf8",
 );
 const proxySource = readFileSync(resolve("proxy.ts"), "utf8");
+const supabaseMiddlewareSource = readFileSync(
+  resolve("lib/supabase/middleware.ts"),
+  "utf8",
+);
 const identitySource = readFileSync(
   resolve("lib/agent/verified-payment-identity.ts"),
   "utf8",
@@ -104,7 +112,10 @@ function createRouteHarness() {
 
     const payment = await paymentGate(request, bodyText);
     if (payment.type === "response") {
-      return { response: payment.response, bodyReadCount };
+      return {
+        response: ensureRouteHandlerResponse(payment.response, "fallback-request-id"),
+        bodyReadCount,
+      };
     }
 
     generationCount += 1;
@@ -191,11 +202,34 @@ test("duplicate paid replay returns stored HTTP 200 and generates once", async (
   assert.deepEqual(await replay.response.json(), await first.response.json());
 });
 
+test("route handler rejects middleware continuation responses", async () => {
+  const continuation = new Response(null, {
+    status: 200,
+    headers: { "x-middleware-next": "1" },
+  });
+
+  assert.equal(isNextContinuationResponse(continuation), true);
+  const response = ensureRouteHandlerResponse(continuation, "continuation-test");
+  assert.equal(response.status, 500);
+  assert.equal(response.headers.get("x-middleware-next"), null);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: "INVALID_ROUTE_CONTINUATION",
+      message: "The request could not be completed.",
+      request_id: "continuation-test",
+    },
+  });
+});
+
 test("payment gate remains official, synchronous, reserved, and production-bound", () => {
   assert.match(paymentGateSource, /runOfficialPaymentGate/);
   assert.match(paymentGateSource, /withX402/);
   assert.doesNotMatch(paymentGateSource, /paymentProxy/);
   assert.doesNotMatch(paymentGateSource, /NextResponse\.next/);
+  assert.equal(
+    (paymentGateSource.match(/ensureRouteHandlerResponse\(gateResponse,/g) ?? []).length,
+    2,
+  );
   assert.match(paymentGateSource, /syncSettle: true/);
   assert.match(paymentGateSource, /reserveVerifiedPaymentAtomic/);
   assert.match(paymentGateSource, /extractVerifiedPaymentIdentity/);
@@ -211,7 +245,10 @@ test("payment gate remains official, synchronous, reserved, and production-bound
 test("route owns one body read and proxy only refreshes Supabase session", () => {
   assert.equal((routeSource.match(/await request\.text\(\)/g) ?? []).length, 1);
   assert.match(routeSource, /runOfficialPaymentGate\(request, bodyText\)/);
+  assert.match(routeSource, /ensureRouteHandlerResponse\(paymentResult\.response, fallbackRequestId\)/);
   assert.match(routeSource, /JSON\.parse\(bodyText\)/);
   assert.doesNotMatch(proxySource, /x402|runOfficialPayment/);
   assert.match(proxySource, /return updateSession\(request\)/);
+  assert.match(supabaseMiddlewareSource, /NextResponse\.next/);
+  assert.doesNotMatch(routeSource, /NextResponse\.next/);
 });

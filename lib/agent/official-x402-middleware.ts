@@ -19,6 +19,7 @@ import {
   extractVerifiedPaymentIdentity,
   safeVerificationShape,
 } from "@/lib/agent/verified-payment-identity";
+import { ensureRouteHandlerResponse } from "@/lib/http/route-handler-response";
 import { securityLog } from "@/lib/security/logger";
 
 type PaymentRequestContext = {
@@ -86,7 +87,8 @@ export async function runOfficialPaymentGate(
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
     };
-    const response = await requestContext.run(challengeContext, () => routeGate(paymentRequest));
+    const gateResponse = await requestContext.run(challengeContext, () => routeGate(paymentRequest));
+    const response = ensureRouteHandlerResponse(gateResponse, challengeContext.requestId);
     logMiddlewareResult(challengeContext, response.status);
     return { type: "response", response };
   }
@@ -98,7 +100,8 @@ export async function runOfficialPaymentGate(
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
   };
-  const response = await requestContext.run(paidContext, () => routeGate(paymentRequest));
+  const gateResponse = await requestContext.run(paidContext, () => routeGate(paymentRequest));
+  const response = ensureRouteHandlerResponse(gateResponse, paidContext.requestId);
 
   if (paidContext.replayDecision === "completed" && paidContext.storedResponse) {
     logMiddlewareResult(paidContext, 200);

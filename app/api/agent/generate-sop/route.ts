@@ -13,6 +13,10 @@ import {
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { validateAgentRequestPayload } from "@/lib/agent/request-validation";
 import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
+import {
+  ensureRouteHandlerResponse,
+  isNextContinuationResponse,
+} from "@/lib/http/route-handler-response";
 import { securityLog } from "@/lib/security/logger";
 
 export const runtime = "nodejs";
@@ -61,7 +65,14 @@ export async function POST(request: Request) {
 
   const paymentResult = await runOfficialPaymentGate(request, bodyText);
   if (paymentResult.type === "response") {
-    return paymentResult.response;
+    if (isNextContinuationResponse(paymentResult.response)) {
+      securityLog("route_continuation_rejected", {
+        request_id: fallbackRequestId,
+        route: "/api/agent/generate-sop",
+        http_status: paymentResult.response.status,
+      });
+    }
+    return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
   }
   const requestId = paymentResult.requestId;
   const finalize = (response: Response) => withPaymentReceipt(response, paymentResult);
