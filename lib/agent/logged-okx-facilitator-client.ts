@@ -27,10 +27,29 @@ export class LoggedOKXFacilitatorClient extends OKXFacilitatorClient {
     payload: PaymentPayload,
     requirements: PaymentRequirements,
   ): Promise<VerifyResponse> {
-    const raw = await super.verify(payload, requirements) as unknown;
+    let raw: unknown;
+    try {
+      raw = await super.verify(payload, requirements) as unknown;
+    } catch (error) {
+      securityLog("payment_verification_threw", {
+        error_name: error instanceof Error ? error.name : "UnknownError",
+        error_message: scrubDiagnosticText(
+          error instanceof Error
+            ? error.message
+            : "The OKX facilitator verification call failed.",
+        ),
+      });
+      throw error;
+    }
     const shape = safeRawVerificationShape(raw);
     const normalized = normalizeOfficialVerificationResult(raw);
-    if (!normalized) throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
+    if (!normalized) {
+      securityLog("payment_verification_malformed", {
+        response_kind: shape.responseKind,
+        response_keys: shape.responseKeys,
+      });
+      throw new Error("OKX_VERIFY_RESPONSE_MALFORMED");
+    }
     const diagnostics = safeVerificationShape({
       paymentPayload: payload,
       result: normalized,
@@ -124,4 +143,8 @@ function scrub(value: string): string {
     .replace(/0x[a-fA-F0-9]{64,}/g, "[redacted]")
     .replace(/[A-Za-z0-9+/=_-]{160,}/g, "[redacted]")
     .slice(0, 160);
+}
+
+function scrubDiagnosticText(value: string): string {
+  return scrub(value);
 }
