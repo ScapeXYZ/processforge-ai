@@ -27,8 +27,8 @@ const invalid = await request("/api/agent/generate-sop", { method: "POST", heade
 const payload = { title: "Supplier invoice approval", description: "When a supplier invoice arrives, Accounting validates it, records approval evidence within two business days, escalates exceptions, and schedules payment.", industry: "Finance", department: "Accounting", audience: "Accounts payable team", requirements: ["Define approval and exception evidence"], output_format: "json" };
 const unpaid = await request("/api/agent/generate-sop", { method: "POST", headers: baseHeaders, body: JSON.stringify(payload) });
 if (metadata.body?.pricing?.enabled) {
-  assert(invalid.response.status === 402, "Unpaid invalid request receives payment challenge", `HTTP ${invalid.response.status}`);
-  assert(invalid.response.headers.get("payment-required"), "Unpaid invalid request challenge header", "present");
+  assert(invalid.response.status === 400, "Invalid request rejected before payment", `HTTP ${invalid.response.status}`);
+  assert(!invalid.response.headers.get("payment-required"), "Invalid request payment challenge", "absent");
   assert(unpaid.response.status === 402 && Boolean(unpaid.response.headers.get("payment-required")), "Official payment challenge", `HTTP ${unpaid.response.status}`);
 } else {
   assert(invalid.response.status === 400, "Disabled invalid request validation", `HTTP ${invalid.response.status}`);
@@ -63,7 +63,7 @@ assert(officialMiddlewareSource.includes("reserveVerifiedPayment") && paymentSto
 assert(officialMiddlewareSource.includes("PAYMENT_SETTLEMENT_PENDING") && officialMiddlewareSource.includes('"unknown"'), "Unknown settlement blocking", "enabled");
 assert(packageSource.includes("reconcile:x402-settlements"), "Settlement reconciliation command", "present");
 assert(existsSync(resolve("legacy/x402-custom/runtime/x402.ts")), "Legacy x402 isolation", "custom runtime moved");
-const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql", "202607230001_harden_x402_payment_replay.sql", "202607230002_x402_unknown_settlement.sql", "202607240001_server_derived_x402_replay.sql", "202607240002_repair_x402_payment_reservation_schema.sql"];
+const migrations = ["202607210001_initial_cloud_schema.sql", "202607220001_team_collaboration.sql", "202607220007_sop_analytics.sql", "202607220008_compliance_audit_center.sql", "202607220009_public_template_marketplace.sql", "202607220010_repair_partial_marketplace_schema.sql", "202607220011_okx_x402_agent_service.sql", "202607220012_retire_workspace_invitations.sql", "202607230001_harden_x402_payment_replay.sql", "202607230002_x402_unknown_settlement.sql", "202607240001_server_derived_x402_replay.sql", "202607240002_repair_x402_payment_reservation_schema.sql", "202607260001_x402_request_payload_replay.sql"];
 assert(migrations.every(file => existsSync(resolve("supabase/migrations", file))), "Required migrations", `${migrations.length} files present`);
 assert(existsSync(resolve(".next/BUILD_ID")) || existsSync(resolve(".next/build-manifest.json")), "Production build artifact", "run npm run build before release verification");
 

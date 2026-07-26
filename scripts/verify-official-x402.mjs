@@ -63,8 +63,8 @@ assert(!unpaid.response.headers.get("x-mock-payment-token"), "legacy mock paymen
 
 let requirement = null;
 if (pricing?.enabled === true) {
-  assert(invalid.response.status === 402, `unpaid invalid POST: expected HTTP 402, received ${invalid.response.status}`);
-  assert(invalid.response.headers.get("payment-required"), "unpaid invalid POST is missing payment-required");
+  assert(invalid.response.status === 400, `unpaid invalid POST: expected HTTP 400, received ${invalid.response.status}`);
+  assert(!invalid.response.headers.get("payment-required"), "invalid POST must not receive a payment challenge");
   assert(paymentStatus?.status === "ready", `payment health: expected ready, received ${JSON.stringify(paymentStatus?.status)}`);
   assert(paymentStatus?.provider === "okx-official", `payment provider: expected okx-official, received ${JSON.stringify(paymentStatus?.provider)}`);
   assert(unpaid.response.status === 402, `unpaid POST: expected HTTP 402, received ${unpaid.response.status}`);
@@ -73,7 +73,9 @@ if (pricing?.enabled === true) {
   const challenge = decodePaymentRequiredHeader(encoded);
   requirement = challenge?.accepts?.[0];
   assert(challenge?.x402Version === 2, `x402Version: expected 2, received ${JSON.stringify(challenge?.x402Version)}`);
-  assert(challenge?.resource?.url === new URL("/api/agent/generate-sop", target).href, `resource: expected ${new URL("/api/agent/generate-sop", target).href}, received ${JSON.stringify(challenge?.resource?.url)}`);
+  const resourceUrl = new URL(challenge?.resource?.url);
+  assert(resourceUrl.origin === new URL(target).origin && resourceUrl.pathname === "/api/agent/generate-sop", `resource: unexpected URL ${JSON.stringify(challenge?.resource?.url)}`);
+  assert(/^[A-Za-z0-9_-]{32}$/.test(resourceUrl.searchParams.get("_pf_x402_replay") || ""), "resource: missing replay locator");
   assert(requirement?.scheme === "exact", `scheme: expected exact, received ${JSON.stringify(requirement?.scheme)}`);
   assert(requirement?.network === "eip155:196", `network: expected eip155:196, received ${JSON.stringify(requirement?.network)}`);
   assert(/^0x[a-fA-F0-9]{40}$/.test(requirement?.asset || ""), `asset: expected EVM contract, received ${JSON.stringify(requirement?.asset)}`);

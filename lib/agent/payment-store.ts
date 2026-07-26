@@ -41,6 +41,15 @@ export type AgentRequestClaim = {
   response_payload: Record<string, unknown> | null;
 };
 
+export type AgentRequestPayloadRecord = {
+  replay_key: string;
+  request_hash: string;
+  body_text: string;
+  expires_at: string;
+  consumed_at: string | null;
+  consumed_authorization_hash: string | null;
+};
+
 function database() {
   const client = createAdminClient();
   if (!client) throw new Error("PAYMENT_STORAGE_UNAVAILABLE");
@@ -55,6 +64,63 @@ export async function findAgentRequest(idempotencyKey: string): Promise<AgentReq
     .maybeSingle();
   if (error) throw new Error(`AGENT_REQUEST_LOOKUP_${error.code}`);
   return data as AgentRequestRecord | null;
+}
+
+export async function storeAgentRequestPayload(row: {
+  replay_key: string;
+  request_hash: string;
+  body_text: string;
+  expires_at: string;
+}): Promise<void> {
+  const { error: cleanupError } = await database()
+    .from("agent_request_payloads")
+    .delete()
+    .lt("expires_at", new Date().toISOString());
+  if (cleanupError) throw new Error(`REQUEST_PAYLOAD_CLEANUP_${cleanupError.code}`);
+  const { error } = await database().from("agent_request_payloads").insert(row);
+  if (error) throw new Error(`REQUEST_PAYLOAD_INSERT_${error.code}`);
+}
+
+export async function findAgentRequestPayload(
+  replayKey: string,
+  authorizationHash: string,
+): Promise<AgentRequestPayloadRecord | null> {
+  const { data, error } = await database()
+    .from("agent_request_payloads")
+    .select("replay_key,request_hash,body_text,expires_at,consumed_at,consumed_authorization_hash")
+    .eq("replay_key", replayKey)
+    .gt("expires_at", new Date().toISOString())
+    .maybeSingle();
+  if (error) throw new Error(`REQUEST_PAYLOAD_LOOKUP_${error.code}`);
+  const record = data as AgentRequestPayloadRecord | null;
+  if (
+    record?.consumed_at
+    && record.consumed_authorization_hash !== authorizationHash
+  ) {
+    return null;
+  }
+  return record;
+}
+
+export async function consumeAgentRequestPayload(
+  replayKey: string,
+  authorizationHash: string,
+): Promise<void> {
+  const { data, error } = await database()
+    .from("agent_request_payloads")
+    .update({
+      consumed_at: new Date().toISOString(),
+      consumed_authorization_hash: authorizationHash,
+    })
+    .eq("replay_key", replayKey)
+    .is("consumed_at", null)
+    .select("replay_key")
+    .maybeSingle();
+  if (error) throw new Error(`REQUEST_PAYLOAD_CONSUME_${error.code}`);
+  if (!data) {
+    const existing = await findAgentRequestPayload(replayKey, authorizationHash);
+    if (!existing?.consumed_at) throw new Error("REQUEST_PAYLOAD_CONSUME_MISSING");
+  }
 }
 
 export async function reserveVerifiedPaymentAtomic(

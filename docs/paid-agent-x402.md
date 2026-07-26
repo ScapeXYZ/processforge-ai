@@ -1,6 +1,6 @@
 # ProcessForge paid agent (x402)
 
-`POST /api/agent/generate-sop` is a machine-callable paid service. Every unpaid POST reaches the official payment wrapper before business-body validation and receives HTTP `402` with an x402 v2 requirement in the `payment-required` response header. The official OKX facilitator verifies and settles a proof-bearing retry before the route validates the business JSON. OpenAI generation starts only after successful settlement and validation.
+`POST /api/agent/generate-sop` is a machine-callable paid service. The route reads and validates an unpaid JSON body before issuing an HTTP `402` challenge. A validated payload is held in durable temporary storage for 10 minutes, keyed by an opaque locator embedded in the challenge's signed resource URL. The official OKX facilitator verifies and settles a proof-bearing retry before OpenAI generation starts.
 
 ## Request
 
@@ -12,9 +12,9 @@ curl -i -X POST "$PROCESSFORGE_URL/api/agent/generate-sop" \
   --data '{"title":"Invoice approval","description":"When an invoice arrives, Accounting validates and approves it within two business days.","industry":"Finance","department":"Accounting","audience":"Accounts payable","output_format":"json"}'
 ```
 
-Decode the `payment-required` header with an x402-compatible client, authorize the advertised exact payment, then retry the identical JSON request with the resulting standard `payment-signature` header. Do not alter the resource, amount, asset, recipient, network, or request content on retry.
+Decode the `payment-required` header with an x402-compatible client and authorize the advertised payment without changing the signed resource URL, amount, asset, recipient, or network. A paid retry may resend the identical JSON body. If a compatible client sends an empty paid-retry body, the server restores the validated payload using the locator in the signed resource URL. Missing or expired replay state fails before a second settlement attempt.
 
-Successful JSON includes `request_id`, `service`, `status`, `sop`, deterministic `analytics`, deterministic `compliance`, `assumptions`, `warnings`, `generated_at`, `processing_time_ms`, and `schema_version`. Stable error codes include `INVALID_REQUEST`, `PAYMENT_REQUIRED`, `PAYMENT_INVALID`, `PAYMENT_SETTLEMENT_FAILED`, `PAYMENT_REPLAY_CONFLICT`, `REQUEST_IN_PROGRESS`, `RATE_LIMITED`, `SERVICE_BUSY`, `AI_TIMEOUT`, and `GENERATION_FAILED`.
+Successful JSON includes `request_id`, `service`, `status`, `sop`, deterministic `analytics`, deterministic `compliance`, `assumptions`, `warnings`, `generated_at`, `processing_time_ms`, and `schema_version`. Stable error codes include `INVALID_REQUEST`, `PAYMENT_REQUIRED`, `PAYMENT_INVALID`, `PAYMENT_SETTLEMENT_FAILED`, `PAYMENT_REPLAY_CONFLICT`, `REQUEST_IN_PROGRESS`, `REPLAY_PAYLOAD_UNAVAILABLE`, `RATE_LIMITED`, `SERVICE_BUSY`, `AI_TIMEOUT`, and `GENERATION_FAILED`.
 
 ## Configuration
 

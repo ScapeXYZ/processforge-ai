@@ -36,6 +36,7 @@ type PaymentRequestContext = {
   verifiedRequirements?: PaymentRequirements;
   replayDecision?: "new" | "completed" | "busy" | "resume" | "conflict";
   storedResponse?: Record<string, unknown> | null;
+  replayLocator: string | null;
 };
 
 const PAYMENT_ROUTE = "/api/agent/generate-sop";
@@ -54,6 +55,7 @@ export type OfficialPaymentGateResult =
 export async function runOfficialPaymentGate(
   request: Request,
   bodyText: string,
+  replayLocator: string | null = null,
 ): Promise<OfficialPaymentGateResult> {
   const config = getOfficialPaymentConfig();
   if (config.requested && !config.ready) {
@@ -74,7 +76,7 @@ export async function runOfficialPaymentGate(
   const routeGate = cachedRouteGate ??= createOfficialRouteGate();
   const paymentHeaders = new Headers(request.headers);
   paymentHeaders.set("content-type", "application/json");
-  const paymentRequest = new NextRequest(request.url, {
+  const paymentRequest = new NextRequest(paymentResourceUrl(replayLocator), {
     method: "POST",
     headers: paymentHeaders,
     body: bodyText,
@@ -87,6 +89,7 @@ export async function runOfficialPaymentGate(
       paymentSignaturePresent,
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
+      replayLocator,
     };
     const gateResponse = await requestContext.run(challengeContext, () => routeGate(paymentRequest));
     const response = ensureRouteHandlerResponse(gateResponse, challengeContext.requestId);
@@ -100,6 +103,7 @@ export async function runOfficialPaymentGate(
     paymentSignaturePresent,
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
+    replayLocator,
   };
   const gateResponse = await requestContext.run(paidContext, () => routeGate(paymentRequest));
   const response = ensureRouteHandlerResponse(gateResponse, paidContext.requestId);
@@ -206,7 +210,7 @@ function createOfficialRouteGate() {
       paymentPayload,
       requirements,
       result,
-      resource: `${paymentResourceOrigin()}${PAYMENT_ROUTE}`,
+      resource: paymentResourceUrl(context.replayLocator),
     });
     if (!identity || !context.requestHash) {
       throw new Error("VERIFIED_PAYMENT_IDENTITY_MISSING");
@@ -334,7 +338,6 @@ function createOfficialRouteGate() {
     }
   });
 
-  const resource = `${paymentResourceOrigin()}${PAYMENT_ROUTE}`;
   return withX402(
     async () => new NextResponse(null, { status: 204 }),
     {
@@ -349,7 +352,6 @@ function createOfficialRouteGate() {
         },
         maxTimeoutSeconds: config.maxTimeoutSeconds,
       },
-      resource,
       description: "Generate a ProcessForge SOP",
       mimeType: "application/json",
       unpaidResponseBody: () => ({
@@ -378,6 +380,14 @@ function createOfficialRouteGate() {
     undefined,
     true,
   );
+}
+
+function paymentResourceUrl(replayLocator: string | null): string {
+  const resource = new URL(`${paymentResourceOrigin()}${PAYMENT_ROUTE}`);
+  if (replayLocator) {
+    resource.searchParams.set("_pf_x402_replay", replayLocator);
+  }
+  return resource.toString();
 }
 
 // The resource URL is embedded in the 402 challenge and used to build the

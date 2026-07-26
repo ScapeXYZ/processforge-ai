@@ -43,7 +43,8 @@ if (challenge?.x402Version !== 2
   || requirement?.asset?.toLowerCase() !== ASSET
   || requirement?.extra?.name !== "USD₮0"
   || requirement?.extra?.version !== "1"
-  || challenge?.resource?.url !== endpoint) {
+  || new URL(challenge?.resource?.url).pathname !== new URL(endpoint).pathname
+  || !/^[A-Za-z0-9_-]{32}$/.test(new URL(challenge?.resource?.url).searchParams.get("_pf_x402_replay") || "")) {
   throw new Error("The server challenge does not match the canonical X Layer Testnet payment profile.");
 }
 if (!/^0x[a-fA-F0-9]{40}$/.test(requirement.payTo)) throw new Error("The challenge recipient is invalid.");
@@ -84,11 +85,13 @@ if (process.env.CONFIRM_TESTNET_X402_PAYMENT !== "YES") {
 const signer = toClientEvmSigner(account, publicClient);
 const client = new x402Client().register(NETWORK, new ExactEvmScheme(signer));
 let replayHeaders = null;
+let replayUrl = null;
 const recordingFetch = async (input, init) => {
   const outgoing = new Request(input, init);
   const paymentSignature = outgoing.headers.get("payment-signature");
   const xPayment = outgoing.headers.get("x-payment");
   if (paymentSignature || xPayment) {
+    replayUrl = outgoing.url;
     replayHeaders = {
       "content-type": "application/json",
       ...(paymentSignature ? { "payment-signature": paymentSignature } : {}),
@@ -113,14 +116,14 @@ const settlement = decodePaymentResponseHeader(paymentResponse);
 if (!settlement?.transaction) throw new Error("Successful paid response did not include a settlement reference.");
 
 if (!replayHeaders) throw new Error("The official client did not emit a standard payment header.");
-const idempotent = await fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) });
+const idempotent = await fetch(replayUrl, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) });
 const idempotentBody = await idempotent.json().catch(() => null);
 if (idempotent.status !== 200
   || idempotentBody?.request_id !== result.request_id
   || idempotent.headers.get("x-idempotent-replay") !== "true") {
   throw new Error("Completed-result idempotency verification failed.");
 }
-const conflict = await fetch(endpoint, {
+const conflict = await fetch(replayUrl, {
   method: "POST",
   headers: replayHeaders,
   body: JSON.stringify({ ...body, description: `${body.description} Changed content.` }),

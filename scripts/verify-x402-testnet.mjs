@@ -51,8 +51,8 @@ const headers = {
   "content-type": "application/json",
 };
 const invalid = await request("/api/agent/generate-sop", { method: "POST", headers, body: "{}" });
-assert(invalid.response.status === 402, `unpaid invalid POST: expected 402, received ${invalid.response.status}`);
-assert(invalid.response.headers.get("payment-required"), "unpaid invalid POST is missing payment-required");
+assert(invalid.response.status === 400, `unpaid invalid POST: expected 400, received ${invalid.response.status}`);
+assert(!invalid.response.headers.get("payment-required"), "invalid POST must not receive a payment challenge");
 const body = {
   title: "X Layer testnet verification",
   description: "Operations validates a request, records evidence, obtains approval, and escalates exceptions.",
@@ -73,7 +73,10 @@ const challenge = decodePaymentRequiredHeader(encoded);
 const requirement = challenge?.accepts?.[0];
 const expectedResource = new URL("/api/agent/generate-sop", target).href;
 assert(challenge?.x402Version === 2, `x402Version: expected 2, received ${JSON.stringify(challenge?.x402Version)}`);
-assert(challenge?.resource?.url === expectedResource, `resource: expected ${expectedResource}, received ${JSON.stringify(challenge?.resource?.url)}`);
+const resourceUrl = new URL(challenge?.resource?.url);
+const expectedResourceUrl = new URL(expectedResource);
+assert(resourceUrl.origin === expectedResourceUrl.origin && resourceUrl.pathname === expectedResourceUrl.pathname, `resource: expected ${expectedResource}, received ${JSON.stringify(challenge?.resource?.url)}`);
+assert(/^[A-Za-z0-9_-]{32}$/.test(resourceUrl.searchParams.get("_pf_x402_replay") || ""), "resource is missing replay locator");
 assert(requirement?.scheme === "exact", `scheme: expected exact, received ${JSON.stringify(requirement?.scheme)}`);
 assert(requirement?.network === NETWORK, `network: expected ${NETWORK}, received ${JSON.stringify(requirement?.network)}`);
 assert(requirement?.asset?.toLowerCase() === ASSET, `asset: expected ${ASSET}, received ${JSON.stringify(requirement?.asset)}`);

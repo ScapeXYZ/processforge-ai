@@ -2,16 +2,27 @@ import OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { agentError } from "@/lib/agent/contract";
 import { generateAgentSop } from "@/lib/agent/generate";
+import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import {
   runOfficialPaymentGate,
   type OfficialPaymentGateResult,
 } from "@/lib/agent/official-x402-middleware";
 import {
+  consumeAgentRequestPayload,
+  findAgentRequestPayload,
   recordUsage,
+  storeAgentRequestPayload,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { validateAgentRequestPayload } from "@/lib/agent/request-validation";
+import {
+  createRequestReplayLocator,
+  deriveRequestReplayKey,
+  paymentAuthorizationHash,
+  readRequestReplayLocator,
+  REQUEST_REPLAY_TTL_MS,
+} from "@/lib/agent/request-payload-replay";
 import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
 import {
   ensureRouteHandlerResponse,
@@ -42,17 +53,50 @@ export async function POST(request: Request) {
     return agentError("INVALID_REQUEST", "Request body could not be read.", 400, fallbackRequestId);
   }
 
-  const paymentResult = await runOfficialPaymentGate(request, bodyText);
-  if (paymentResult.type === "response") {
-    if (isNextContinuationResponse(paymentResult.response)) {
-      securityLog("route_continuation_rejected", {
+  const paidRequest =
+    request.headers.has("payment-signature")
+    || request.headers.has("x-payment");
+  const authorizationHash = paymentAuthorizationHash(request);
+  let replayLocator = readRequestReplayLocator(request.url);
+  let replayKey = replayLocator ? deriveRequestReplayKey(replayLocator) : null;
+  let restoredPayload = false;
+
+  if (paidRequest && bodyText.trim().length === 0) {
+    securityLog("empty_paid_body_detected", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      replay_locator_present: Boolean(replayLocator),
+    });
+    let stored = null;
+    try {
+      stored = replayKey && authorizationHash
+        ? await findAgentRequestPayload(replayKey, authorizationHash)
+        : null;
+    } catch {
+      // Treat unavailable durable storage exactly like an expired/missing payload.
+    }
+    if (!stored) {
+      securityLog("replay_payload_missing", {
         request_id: fallbackRequestId,
         route: "/api/agent/generate-sop",
-        http_status: paymentResult.response.status,
+        replay_locator_present: Boolean(replayLocator),
       });
+      return agentError(
+        "REPLAY_PAYLOAD_UNAVAILABLE",
+        "The paid request body was empty and its temporary replay payload is unavailable or expired.",
+        500,
+        fallbackRequestId,
+      );
     }
-    return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
+    bodyText = stored.body_text;
+    restoredPayload = true;
+    securityLog("request_payload_restored", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      request_hash: stored.request_hash,
+    });
   }
+
   let payload: unknown;
   try {
     payload = JSON.parse(bodyText);
@@ -83,6 +127,54 @@ export async function POST(request: Request) {
         request_id: fallbackRequestId,
       },
     }, { status: validated.status });
+  }
+
+  const paymentConfig = getOfficialPaymentConfig();
+  if (!paidRequest && paymentConfig.ready) {
+    replayLocator = createRequestReplayLocator();
+    replayKey = deriveRequestReplayKey(replayLocator);
+    securityLog("replay_key_created", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      request_hash: validated.requestHash,
+    });
+    try {
+      await storeAgentRequestPayload({
+        replay_key: replayKey,
+        request_hash: validated.requestHash,
+        body_text: bodyText,
+        expires_at: new Date(Date.now() + REQUEST_REPLAY_TTL_MS).toISOString(),
+      });
+    } catch {
+      securityLog("request_payload_store_failed", {
+        request_id: fallbackRequestId,
+        route: "/api/agent/generate-sop",
+      });
+      return agentError(
+        "SERVICE_BUSY",
+        "Temporary request replay storage is unavailable. No payment was requested.",
+        503,
+        fallbackRequestId,
+      );
+    }
+    securityLog("request_payload_stored", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      request_hash: validated.requestHash,
+      expires_in_seconds: REQUEST_REPLAY_TTL_MS / 1000,
+    });
+  }
+
+  const paymentResult = await runOfficialPaymentGate(request, bodyText, replayLocator);
+  if (paymentResult.type === "response") {
+    if (isNextContinuationResponse(paymentResult.response)) {
+      securityLog("route_continuation_rejected", {
+        request_id: fallbackRequestId,
+        route: "/api/agent/generate-sop",
+        http_status: paymentResult.response.status,
+      });
+    }
+    return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
   }
   const requestId = paymentResult.requestId;
   const finalize = (response: Response) => withPaymentReceipt(response, paymentResult);
@@ -128,6 +220,21 @@ export async function POST(request: Request) {
       processing_time_ms: duration,
       completed_at: completedAt,
     });
+    if (replayKey && authorizationHash) {
+      try {
+        await consumeAgentRequestPayload(replayKey, authorizationHash);
+        securityLog("request_payload_consumed", {
+          request_id: requestId,
+          route: "/api/agent/generate-sop",
+          restored_payload: restoredPayload,
+        });
+      } catch {
+        securityLog("request_payload_consume_failed", {
+          request_id: requestId,
+          route: "/api/agent/generate-sop",
+        });
+      }
+    }
     await recordUsage({
       request_id: requestId,
       service: AGENT_SERVICE,

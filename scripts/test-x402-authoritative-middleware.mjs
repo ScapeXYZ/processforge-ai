@@ -37,7 +37,10 @@ const validRequestBody = {
 
 function createRouteHarness() {
   const completedPayments = new Map();
+  const requestPayloads = new Map();
   let generationCount = 0;
+  let replaySequence = 0;
+  let now = Date.now();
 
   async function paymentGate(request, bodyText) {
     const paymentId = request.headers.get("payment-signature");
@@ -67,9 +70,16 @@ function createRouteHarness() {
     };
   }
 
-  async function route({ paymentId, body, rawBody = JSON.stringify(body) }) {
+  async function route({
+    paymentId,
+    body,
+    rawBody = JSON.stringify(body),
+    replayLocator = null,
+  }) {
+    const url = new URL("https://processforgeai.xyz/api/agent/generate-sop");
+    if (replayLocator) url.searchParams.set("_pf_x402_replay", replayLocator);
     const request = new Request(
-      "https://processforgeai.xyz/api/agent/generate-sop",
+      url,
       {
         method: "POST",
         headers: {
@@ -86,7 +96,29 @@ function createRouteHarness() {
       return nativeText();
     };
 
-    const bodyText = await request.text();
+    let bodyText = await request.text();
+    if (paymentId && bodyText.length === 0) {
+      const stored = replayLocator ? requestPayloads.get(replayLocator) : null;
+      if (
+        !stored
+        || stored.expiresAt <= now
+        || (stored.consumedBy && stored.consumedBy !== paymentId)
+      ) {
+        return {
+          response: Response.json(
+            {
+              error: {
+                code: "REPLAY_PAYLOAD_UNAVAILABLE",
+                message: "The paid request body was empty and its temporary replay payload is unavailable or expired.",
+              },
+            },
+            { status: 500 },
+          ),
+          bodyReadCount,
+        };
+      }
+      bodyText = stored.bodyText;
+    }
     let payload;
     try {
       payload = JSON.parse(bodyText);
@@ -110,6 +142,29 @@ function createRouteHarness() {
       };
     }
 
+    if (!paymentId) {
+      const locator = `test-replay-locator-${String(++replaySequence).padStart(11, "0")}`;
+      requestPayloads.set(locator, {
+        bodyText,
+        expiresAt: now + 10 * 60 * 1000,
+        consumedBy: null,
+      });
+      return {
+        response: Response.json(
+          { error: { code: "PAYMENT_REQUIRED" } },
+          {
+            status: 402,
+            headers: {
+              "x-test-replay-url":
+                `https://processforgeai.xyz/api/agent/generate-sop?_pf_x402_replay=${locator}`,
+            },
+          },
+        ),
+        bodyReadCount,
+        replayLocator: locator,
+      };
+    }
+
     const payment = await paymentGate(request, bodyText);
     if (payment.type === "response") {
       return {
@@ -125,6 +180,9 @@ function createRouteHarness() {
       sop: { title: validated.data.title, sections: [] },
     };
     completedPayments.set(paymentId, responseBody);
+    if (replayLocator) {
+      requestPayloads.get(replayLocator).consumedBy = paymentId;
+    }
     return {
       response: Response.json(responseBody, { status: 200 }),
       bodyReadCount,
@@ -136,23 +194,31 @@ function createRouteHarness() {
     get generationCount() {
       return generationCount;
     },
+    expirePayloads() {
+      now += 10 * 60 * 1000 + 1;
+    },
   };
 }
 
-test("unpaid valid POST returns HTTP 402", async () => {
+test("unpaid request with body returns HTTP 402 and stores replay payload", async () => {
   const endpoint = createRouteHarness();
   const result = await endpoint.route({ body: validRequestBody });
 
   assert.equal(result.response.status, 402);
   assert.equal(result.bodyReadCount, 1);
+  assert.ok(result.replayLocator);
+  assert.match(result.response.headers.get("x-test-replay-url"), /_pf_x402_replay=/);
   assert.equal(endpoint.generationCount, 0);
 });
 
-test("valid paid POST returns HTTP 200 with SOP and reads body exactly once", async () => {
+test("paid retry with empty body restores payload and returns HTTP 200", async () => {
   const endpoint = createRouteHarness();
+  const unpaid = await endpoint.route({ body: validRequestBody });
   const result = await endpoint.route({
     paymentId: "fresh-paid-proof",
-    body: validRequestBody,
+    body: null,
+    rawBody: "",
+    replayLocator: unpaid.replayLocator,
   });
 
   assert.equal(result.response.status, 200);
@@ -161,6 +227,33 @@ test("valid paid POST returns HTTP 200 with SOP and reads body exactly once", as
   assert.equal(body.sop.title, validRequestBody.title);
   assert.notDeepEqual(body, { payment_verified: true });
   assert.equal(endpoint.generationCount, 1);
+});
+
+test("paid request with body returns HTTP 200", async () => {
+  const endpoint = createRouteHarness();
+  const result = await endpoint.route({
+    paymentId: "paid-proof-with-body",
+    body: validRequestBody,
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.equal(endpoint.generationCount, 1);
+});
+
+test("expired or missing replay payload returns a controlled error", async () => {
+  const endpoint = createRouteHarness();
+  const unpaid = await endpoint.route({ body: validRequestBody });
+  endpoint.expirePayloads();
+  const result = await endpoint.route({
+    paymentId: "expired-paid-proof",
+    body: null,
+    rawBody: "",
+    replayLocator: unpaid.replayLocator,
+  });
+
+  assert.equal(result.response.status, 500);
+  assert.equal((await result.response.json()).error.code, "REPLAY_PAYLOAD_UNAVAILABLE");
+  assert.equal(endpoint.generationCount, 0);
 });
 
 test("malformed JSON returns HTTP 400 before payment", async () => {
@@ -190,9 +283,12 @@ test("schema-invalid JSON returns HTTP 400 before payment", async () => {
 
 test("duplicate paid replay returns stored HTTP 200 and generates once", async () => {
   const endpoint = createRouteHarness();
+  const unpaid = await endpoint.route({ body: validRequestBody });
   const request = {
     paymentId: "duplicate-paid-proof",
-    body: validRequestBody,
+    body: null,
+    rawBody: "",
+    replayLocator: unpaid.replayLocator,
   };
   const first = await endpoint.route(request);
   const replay = await endpoint.route(request);
@@ -255,11 +351,21 @@ test("payment gate remains official, synchronous, reserved, and production-bound
 
 test("route owns one body read and proxy only refreshes Supabase session", () => {
   assert.equal((routeSource.match(/await request\.text\(\)/g) ?? []).length, 1);
-  assert.match(routeSource, /runOfficialPaymentGate\(request, bodyText\)/);
+  assert.match(routeSource, /runOfficialPaymentGate\(request, bodyText, replayLocator\)/);
   assert.match(routeSource, /ensureRouteHandlerResponse\(paymentResult\.response, fallbackRequestId\)/);
   assert.match(routeSource, /JSON\.parse\(bodyText\)/);
   assert.doesNotMatch(proxySource, /x402|runOfficialPayment/);
   assert.match(proxySource, /return updateSession\(request\)/);
   assert.match(supabaseMiddlewareSource, /NextResponse\.next/);
   assert.doesNotMatch(routeSource, /NextResponse\.next/);
+  for (const event of [
+    "replay_key_created",
+    "request_payload_stored",
+    "empty_paid_body_detected",
+    "request_payload_restored",
+    "request_payload_consumed",
+    "replay_payload_missing",
+  ]) {
+    assert.match(routeSource, new RegExp(`securityLog\\("${event}"`));
+  }
 });

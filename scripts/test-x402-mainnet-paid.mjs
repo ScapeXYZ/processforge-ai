@@ -57,7 +57,8 @@ if (challenge?.x402Version !== 2
   || String(requirement?.amount) !== AMOUNT
   || !/^0x[a-fA-F0-9]{40}$/.test(configuredRecipient || "")
   || requirement?.payTo?.toLowerCase() !== configuredRecipient.toLowerCase()
-  || challenge?.resource?.url !== endpoint) {
+  || new URL(challenge?.resource?.url).pathname !== new URL(endpoint).pathname
+  || !/^[A-Za-z0-9_-]{32}$/.test(new URL(challenge?.resource?.url).searchParams.get("_pf_x402_replay") || "")) {
   throw new Error("The server challenge does not match the canonical X Layer mainnet payment profile.");
 }
 
@@ -92,11 +93,13 @@ if (process.env.CONFIRM_MAINNET_X402_PAYMENT !== "YES") {
 const signer = toClientEvmSigner(account, publicClient);
 const client = new x402Client().register(NETWORK, new ExactEvmScheme(signer));
 let replayHeaders = null;
+let replayUrl = null;
 const recordingFetch = async (input, init) => {
   const outgoing = new Request(input, init);
   const paymentSignature = outgoing.headers.get("payment-signature");
   const xPayment = outgoing.headers.get("x-payment");
   if (paymentSignature || xPayment) {
+    replayUrl = outgoing.url;
     replayHeaders = {
       "content-type": "application/json",
       ...(paymentSignature ? { "payment-signature": paymentSignature } : {}),
@@ -156,7 +159,7 @@ if (paid.status !== 200) {
   const settlement = decodePaymentResponseHeader(paymentResponse);
   if (!settlement?.transaction) throw new Error("Successful paid response did not include a settlement reference.");
   if (!replayHeaders) throw new Error("The official client did not emit a standard payment header.");
-  const duplicate = await fetch(endpoint, {
+  const duplicate = await fetch(replayUrl, {
     method: "POST",
     headers: replayHeaders,
     body: JSON.stringify(body),
@@ -169,8 +172,8 @@ if (paid.status !== 200) {
     throw new Error("Completed paid-replay idempotency verification failed.");
   }
   const simultaneous = await Promise.all([
-    fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
-    fetch(endpoint, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
+    fetch(replayUrl, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
+    fetch(replayUrl, { method: "POST", headers: replayHeaders, body: JSON.stringify(body) }),
   ]);
   if (simultaneous.some((response) => response.status !== 200)) {
     throw new Error("Simultaneous duplicate replay verification failed.");
