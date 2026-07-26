@@ -30,6 +30,9 @@ const identitySource = readFileSync(
   resolve("lib/agent/verified-payment-identity.ts"),
   "utf8",
 );
+const metadata = JSON.parse(
+  readFileSync(resolve("agent-metadata.json"), "utf16le").replace(/^\uFEFF/, ""),
+);
 
 const validRequestBody = {
   title: "Daily Restaurant Opening Procedure",
@@ -107,7 +110,25 @@ function createRouteHarness() {
     };
 
     let bodyText = await request.text();
-    if (paymentId && bodyText.length === 0) {
+    bodyText = bodyText.trim().length === 0 ? "{}" : bodyText;
+    let payload;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      return {
+        response: Response.json(
+          { error: { code: "INVALID_JSON", message: "Request body contains malformed JSON." } },
+          { status: 400 },
+        ),
+        bodyReadCount,
+      };
+    }
+    const emptyBusinessPayload =
+      payload !== null
+      && typeof payload === "object"
+      && !Array.isArray(payload)
+      && Object.keys(payload).length === 0;
+    if (paymentId && emptyBusinessPayload) {
       const effectiveLocator = replayLocator ?? paymentResourceLocator;
       let candidates = effectiveLocator
         ? [requestPayloads.get(effectiveLocator)].filter(Boolean)
@@ -155,15 +176,14 @@ function createRouteHarness() {
       }
       stored.consumedBy ??= paymentId;
       bodyText = stored.bodyText;
-    }
-    let payload;
-    try {
       payload = JSON.parse(bodyText);
-    } catch {
+    }
+
+    if (!paymentId && emptyBusinessPayload) {
       return {
         response: Response.json(
-          { error: { code: "INVALID_REQUEST", message: "Request body must be valid JSON." } },
-          { status: 400 },
+          { error: { code: "PAYMENT_REQUIRED" } },
+          { status: 402 },
         ),
         bodyReadCount,
       };
@@ -252,7 +272,21 @@ test("unpaid request with body returns HTTP 402 and stores replay payload", asyn
   assert.equal(endpoint.generationCount, 0);
 });
 
-test("paid retry without a custom replay locator restores exactly one recent payload", async () => {
+test("unpaid empty body returns HTTP 402", async () => {
+  const endpoint = createRouteHarness();
+  const result = await endpoint.route({
+    body: null,
+    rawBody: "   ",
+  });
+
+  assert.equal(result.response.status, 402);
+  assert.equal((await result.response.json()).error.code, "PAYMENT_REQUIRED");
+  assert.equal(result.bodyReadCount, 1);
+  assert.equal(endpoint.generationCount, 0);
+  assert.equal(endpoint.settlementCount, 0);
+});
+
+test("paid empty body with replay match is restored and returns HTTP 200", async () => {
   const endpoint = createRouteHarness();
   await endpoint.route({ body: validRequestBody });
   const result = await endpoint.route({
@@ -266,6 +300,21 @@ test("paid retry without a custom replay locator restores exactly one recent pay
   const body = await result.response.json();
   assert.equal(body.sop.title, validRequestBody.title);
   assert.notDeepEqual(body, { payment_verified: true });
+  assert.equal(endpoint.generationCount, 1);
+  assert.equal(endpoint.settlementCount, 1);
+});
+
+test("paid empty object with replay match is restored and returns HTTP 200", async () => {
+  const endpoint = createRouteHarness();
+  await endpoint.route({ body: validRequestBody });
+  const result = await endpoint.route({
+    paymentId: "empty-object-paid-proof",
+    body: {},
+    rawBody: "{}",
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.equal((await result.response.json()).sop.title, validRequestBody.title);
   assert.equal(endpoint.generationCount, 1);
   assert.equal(endpoint.settlementCount, 1);
 });
@@ -307,7 +356,7 @@ test("paid retry prefers the unique recent payload matching the payer", async ()
   assert.equal(endpoint.settlementCount, 1);
 });
 
-test("paid retry with no recent payload fails before settlement", async () => {
+test("paid empty body without replay match returns a clear replay error", async () => {
   const endpoint = createRouteHarness();
   const result = await endpoint.route({
     paymentId: "missing-paid-proof",
@@ -376,6 +425,7 @@ test("malformed JSON returns HTTP 400 before payment", async () => {
   });
 
   assert.equal(result.response.status, 400);
+  assert.equal((await result.response.json()).error.code, "INVALID_JSON");
   assert.equal(result.bodyReadCount, 1);
   assert.equal(endpoint.generationCount, 0);
 });
@@ -518,6 +568,16 @@ test("payment gate remains official, synchronous, reserved, and production-bound
   );
 });
 
+test("service metadata declares every required SOP input field", () => {
+  assert.deepEqual(metadata.request_schema.required, [
+    "title",
+    "description",
+    "industry",
+    "department",
+    "audience",
+  ]);
+});
+
 test("route owns one body read and proxy only refreshes Supabase session", () => {
   assert.equal((routeSource.match(/await request\.text\(\)/g) ?? []).length, 1);
   assert.match(routeSource, /runOfficialPaymentGate\(/);
@@ -533,6 +593,9 @@ test("route owns one body read and proxy only refreshes Supabase session", () =>
   );
   assert.match(routeSource, /ensureRouteHandlerResponse\(paymentResult\.response, fallbackRequestId\)/);
   assert.match(routeSource, /JSON\.parse\(bodyText\)/);
+  assert.match(routeSource, /bodyText\.trim\(\)\.length === 0 \? "\{\}" : bodyText/);
+  assert.match(routeSource, /"INVALID_JSON"/);
+  assert.match(routeSource, /emptyBusinessPayload/);
   assert.doesNotMatch(proxySource, /x402|runOfficialPayment/);
   assert.match(proxySource, /return updateSession\(request\)/);
   assert.match(supabaseMiddlewareSource, /NextResponse\.next/);

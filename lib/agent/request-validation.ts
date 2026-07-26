@@ -12,7 +12,7 @@ export type ValidAgentRequest = {
 export type InvalidAgentRequest = {
   ok: false;
   status: number;
-  code: "INVALID_REQUEST";
+  code: "INVALID_JSON" | "INVALID_REQUEST" | "MISSING_REQUIRED_FIELDS";
   message: string;
   details?: Array<{ path: string; message: string }>;
 };
@@ -27,13 +27,14 @@ export function validateAgentRequestBody(
   if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     return { ok: false, status: 413, code: "INVALID_REQUEST", message: "Request body is too large." };
   }
+  const normalizedRaw = raw.trim().length === 0 ? "{}" : raw;
   let json: unknown;
   try {
-    json = JSON.parse(raw);
+    json = JSON.parse(normalizedRaw);
   } catch {
-    return { ok: false, status: 400, code: "INVALID_REQUEST", message: "Request body must be valid JSON." };
+    return { ok: false, status: 400, code: "INVALID_JSON", message: "Request body contains malformed JSON." };
   }
-  return validateAgentRequestPayload(raw, json, declaredLength);
+  return validateAgentRequestPayload(normalizedRaw, json, declaredLength);
 }
 
 export function validateAgentRequestPayload(
@@ -46,11 +47,21 @@ export function validateAgentRequestPayload(
   }
   const parsed = agentSopRequestSchema.safeParse(json);
   if (!parsed.success) {
+    const requiredFields = ["title", "description", "industry", "department", "audience"];
+    const missingFields = parsed.error.issues
+      .filter((issue) =>
+        issue.path.length === 1
+        && requiredFields.includes(String(issue.path[0]))
+        && issue.code === "invalid_type")
+      .map((issue) => String(issue.path[0]));
+    const uniqueMissingFields = [...new Set(missingFields)];
     return {
       ok: false,
       status: 400,
-      code: "INVALID_REQUEST",
-      message: "Request validation failed.",
+      code: uniqueMissingFields.length > 0 ? "MISSING_REQUIRED_FIELDS" : "INVALID_REQUEST",
+      message: uniqueMissingFields.length > 0
+        ? `Missing required SOP fields: ${uniqueMissingFields.join(", ")}.`
+        : "Request validation failed.",
       details: parsed.error.issues.map((issue) => ({
         path: issue.path.join("."),
         message: issue.message,

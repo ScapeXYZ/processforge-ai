@@ -53,6 +53,7 @@ export async function POST(request: Request) {
   } catch {
     return agentError("INVALID_REQUEST", "Request body could not be read.", 400, fallbackRequestId);
   }
+  bodyText = bodyText.trim().length === 0 ? "{}" : bodyText;
 
   const paidRequest =
     request.headers.has("payment-signature")
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
     method: request.method,
     header_names: correlation.headerNames,
     body_byte_count: new TextEncoder().encode(bodyText).byteLength,
-    body_empty: bodyText.trim().length === 0,
+    body_empty: isEmptyJsonObjectText(bodyText),
     payment_header_kind: correlation.paymentHeaderKind ?? "none",
     payment_payload_decoded: correlation.decoded,
     payment_payload_keys: correlation.paymentPayloadKeys,
@@ -86,7 +87,25 @@ export async function POST(request: Request) {
     payer_exists: Boolean(correlation.payerAddress),
   });
 
-  if (paidRequest && bodyText.trim().length === 0) {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(bodyText);
+  } catch {
+    securityLog("request_body_parse_failed", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      method: request.method,
+      body_byte_count: new TextEncoder().encode(bodyText).byteLength,
+      body_empty: false,
+      declared_mime_kind: request.headers.get("content-type"),
+      first_non_whitespace_character: [...bodyText.trim()][0] ?? null,
+      payment_signature_present: request.headers.has("payment-signature"),
+    });
+    return agentError("INVALID_JSON", "Request body contains malformed JSON.", 400, fallbackRequestId);
+  }
+
+  const emptyBusinessPayload = isEmptyJsonObject(payload);
+  if (paidRequest && emptyBusinessPayload) {
     securityLog("empty_paid_body_detected", {
       request_id: fallbackRequestId,
       route: "/api/agent/generate-sop",
@@ -140,6 +159,16 @@ export async function POST(request: Request) {
     replayKey = stored.replay_key;
     bodyText = stored.body_text;
     restoredPayload = true;
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      return agentError(
+        "REPLAY_PAYLOAD_UNAVAILABLE",
+        "The restored replay payload is unavailable or invalid. No payment was settled.",
+        500,
+        fallbackRequestId,
+      );
+    }
     securityLog("request_payload_restored", {
       request_id: fallbackRequestId,
       route: "/api/agent/generate-sop",
@@ -147,22 +176,14 @@ export async function POST(request: Request) {
     });
   }
 
-  let payload: unknown;
-  try {
-    payload = JSON.parse(bodyText);
-  } catch {
-    securityLog("request_body_parse_failed", {
-      request_id: fallbackRequestId,
-      route: "/api/agent/generate-sop",
-      method: request.method,
-      body_byte_count: new TextEncoder().encode(bodyText).byteLength,
-      body_empty: bodyText.trim().length === 0,
-      declared_mime_kind: request.headers.get("content-type"),
-      first_non_whitespace_character: [...bodyText.trim()][0] ?? null,
-      payment_signature_present: request.headers.has("payment-signature"),
-    });
-    return agentError("INVALID_REQUEST", "Request body must be valid JSON.", 400, fallbackRequestId);
+  let paymentResult: OfficialPaymentGateResult | null = null;
+  if (!paidRequest && emptyBusinessPayload) {
+    paymentResult = await runOfficialPaymentGate(request, bodyText);
+    if (paymentResult.type === "response") {
+      return ensureRouteHandlerResponse(paymentResult.response, fallbackRequestId);
+    }
   }
+
   const validated = validateAgentRequestPayload(
     bodyText,
     payload,
@@ -217,14 +238,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const paymentResult = await runOfficialPaymentGate(
-    request,
-    bodyText,
-    replayLocator,
-    restoredPayload
-      ? restoredPayloadCorrelation(replayKey, authorizationHash, correlationEndpoint)
-      : null,
-  );
+  paymentResult ??= await runOfficialPaymentGate(
+      request,
+      bodyText,
+      replayLocator,
+      restoredPayload
+        ? restoredPayloadCorrelation(replayKey, authorizationHash, correlationEndpoint)
+        : null,
+    );
   if (paymentResult.type === "response") {
     if (isNextContinuationResponse(paymentResult.response)) {
       securityLog("route_continuation_rejected", {
@@ -334,6 +355,23 @@ export async function POST(request: Request) {
     ));
   } finally {
     release();
+  }
+}
+
+function isEmptyJsonObject(value: unknown): boolean {
+  return Boolean(
+    value
+    && typeof value === "object"
+    && !Array.isArray(value)
+    && Object.keys(value).length === 0,
+  );
+}
+
+function isEmptyJsonObjectText(value: string): boolean {
+  try {
+    return isEmptyJsonObject(JSON.parse(value));
+  } catch {
+    return false;
   }
 }
 
