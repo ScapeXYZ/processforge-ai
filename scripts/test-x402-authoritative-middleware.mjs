@@ -7,6 +7,11 @@ import {
   ensureRouteHandlerResponse,
   isNextContinuationResponse,
 } from "../lib/http/route-handler-response.ts";
+import { encodePaymentSignatureHeader } from "@okxweb3/x402-core/http";
+import {
+  inspectPaidRequestCorrelation,
+  REQUEST_REPLAY_QUERY_PARAM,
+} from "../lib/agent/request-payload-replay.ts";
 
 const paymentGateSource = readFileSync(
   resolve("lib/agent/official-x402-middleware.ts"),
@@ -39,6 +44,7 @@ function createRouteHarness() {
   const completedPayments = new Map();
   const requestPayloads = new Map();
   let generationCount = 0;
+  let settlementCount = 0;
   let replaySequence = 0;
   let now = Date.now();
 
@@ -63,6 +69,7 @@ function createRouteHarness() {
         }),
       };
     }
+    settlementCount += 1;
     return {
       type: "verified",
       requestId: paymentId,
@@ -75,6 +82,9 @@ function createRouteHarness() {
     body,
     rawBody = JSON.stringify(body),
     replayLocator = null,
+    paymentResourceLocator = null,
+    payer = null,
+    initialPayer = null,
   }) {
     const url = new URL("https://processforgeai.xyz/api/agent/generate-sop");
     if (replayLocator) url.searchParams.set("_pf_x402_replay", replayLocator);
@@ -98,7 +108,33 @@ function createRouteHarness() {
 
     let bodyText = await request.text();
     if (paymentId && bodyText.length === 0) {
-      const stored = replayLocator ? requestPayloads.get(replayLocator) : null;
+      const effectiveLocator = replayLocator ?? paymentResourceLocator;
+      let candidates = effectiveLocator
+        ? [requestPayloads.get(effectiveLocator)].filter(Boolean)
+        : [...requestPayloads.values()].filter((candidate) =>
+          candidate.endpoint === "https://processforgeai.xyz/api/agent/generate-sop"
+          && candidate.createdAt >= now - 10 * 60 * 1000
+          && candidate.expiresAt > now
+          && (!candidate.consumedBy || candidate.consumedBy === paymentId));
+      if (!effectiveLocator && payer) {
+        const payerMatches = candidates.filter((candidate) => candidate.payer === payer);
+        if (payerMatches.length > 0) candidates = payerMatches;
+      }
+      if (candidates.length > 1) {
+        return {
+          response: Response.json(
+            {
+              error: {
+                code: "REPLAY_PAYLOAD_AMBIGUOUS",
+                message: "The paid request body was empty and multiple recent payloads matched. No payment was settled.",
+              },
+            },
+            { status: 409 },
+          ),
+          bodyReadCount,
+        };
+      }
+      const stored = candidates[0] ?? null;
       if (
         !stored
         || stored.expiresAt <= now
@@ -117,6 +153,7 @@ function createRouteHarness() {
           bodyReadCount,
         };
       }
+      stored.consumedBy ??= paymentId;
       bodyText = stored.bodyText;
     }
     let payload;
@@ -145,9 +182,13 @@ function createRouteHarness() {
     if (!paymentId) {
       const locator = `test-replay-locator-${String(++replaySequence).padStart(11, "0")}`;
       requestPayloads.set(locator, {
+        locator,
+        endpoint: "https://processforgeai.xyz/api/agent/generate-sop",
         bodyText,
+        createdAt: now,
         expiresAt: now + 10 * 60 * 1000,
         consumedBy: null,
+        payer: initialPayer,
       });
       return {
         response: Response.json(
@@ -180,9 +221,6 @@ function createRouteHarness() {
       sop: { title: validated.data.title, sections: [] },
     };
     completedPayments.set(paymentId, responseBody);
-    if (replayLocator) {
-      requestPayloads.get(replayLocator).consumedBy = paymentId;
-    }
     return {
       response: Response.json(responseBody, { status: 200 }),
       bodyReadCount,
@@ -193,6 +231,9 @@ function createRouteHarness() {
     route,
     get generationCount() {
       return generationCount;
+    },
+    get settlementCount() {
+      return settlementCount;
     },
     expirePayloads() {
       now += 10 * 60 * 1000 + 1;
@@ -211,14 +252,13 @@ test("unpaid request with body returns HTTP 402 and stores replay payload", asyn
   assert.equal(endpoint.generationCount, 0);
 });
 
-test("paid retry with empty body restores payload and returns HTTP 200", async () => {
+test("paid retry without a custom replay locator restores exactly one recent payload", async () => {
   const endpoint = createRouteHarness();
-  const unpaid = await endpoint.route({ body: validRequestBody });
+  await endpoint.route({ body: validRequestBody });
   const result = await endpoint.route({
     paymentId: "fresh-paid-proof",
     body: null,
     rawBody: "",
-    replayLocator: unpaid.replayLocator,
   });
 
   assert.equal(result.response.status, 200);
@@ -227,6 +267,76 @@ test("paid retry with empty body restores payload and returns HTTP 200", async (
   assert.equal(body.sop.title, validRequestBody.title);
   assert.notDeepEqual(body, { payment_verified: true });
   assert.equal(endpoint.generationCount, 1);
+  assert.equal(endpoint.settlementCount, 1);
+});
+
+test("paid retry uses the signed payment resource locator when the HTTP URL omits it", async () => {
+  const endpoint = createRouteHarness();
+  const unpaid = await endpoint.route({ body: validRequestBody });
+  const result = await endpoint.route({
+    paymentId: "resource-locator-proof",
+    body: null,
+    rawBody: "",
+    paymentResourceLocator: unpaid.replayLocator,
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.equal((await result.response.json()).sop.title, validRequestBody.title);
+  assert.equal(endpoint.settlementCount, 1);
+});
+
+test("paid retry prefers the unique recent payload matching the payer", async () => {
+  const endpoint = createRouteHarness();
+  await endpoint.route({
+    body: { ...validRequestBody, title: "Payer A request" },
+    initialPayer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+  await endpoint.route({
+    body: { ...validRequestBody, title: "Payer B request" },
+    initialPayer: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  });
+  const result = await endpoint.route({
+    paymentId: "payer-a-proof",
+    body: null,
+    rawBody: "",
+    payer: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  });
+
+  assert.equal(result.response.status, 200);
+  assert.equal((await result.response.json()).sop.title, "Payer A request");
+  assert.equal(endpoint.settlementCount, 1);
+});
+
+test("paid retry with no recent payload fails before settlement", async () => {
+  const endpoint = createRouteHarness();
+  const result = await endpoint.route({
+    paymentId: "missing-paid-proof",
+    body: null,
+    rawBody: "",
+  });
+
+  assert.equal(result.response.status, 500);
+  assert.equal((await result.response.json()).error.code, "REPLAY_PAYLOAD_UNAVAILABLE");
+  assert.equal(endpoint.generationCount, 0);
+  assert.equal(endpoint.settlementCount, 0);
+});
+
+test("paid retry with multiple recent payloads is ambiguous and never settles", async () => {
+  const endpoint = createRouteHarness();
+  await endpoint.route({ body: validRequestBody });
+  await endpoint.route({
+    body: { ...validRequestBody, title: "Second pending request" },
+  });
+  const result = await endpoint.route({
+    paymentId: "ambiguous-paid-proof",
+    body: null,
+    rawBody: "",
+  });
+
+  assert.equal(result.response.status, 409);
+  assert.equal((await result.response.json()).error.code, "REPLAY_PAYLOAD_AMBIGUOUS");
+  assert.equal(endpoint.generationCount, 0);
+  assert.equal(endpoint.settlementCount, 0);
 });
 
 test("paid request with body returns HTTP 200", async () => {
@@ -254,6 +364,7 @@ test("expired or missing replay payload returns a controlled error", async () =>
   assert.equal(result.response.status, 500);
   assert.equal((await result.response.json()).error.code, "REPLAY_PAYLOAD_UNAVAILABLE");
   assert.equal(endpoint.generationCount, 0);
+  assert.equal(endpoint.settlementCount, 0);
 });
 
 test("malformed JSON returns HTTP 400 before payment", async () => {
@@ -297,7 +408,65 @@ test("duplicate paid replay returns stored HTTP 200 and generates once", async (
   assert.equal(replay.response.status, 200);
   assert.equal(replay.response.headers.get("x-idempotent-replay"), "true");
   assert.equal(endpoint.generationCount, 1);
+  assert.equal(endpoint.settlementCount, 1);
   assert.deepEqual(await replay.response.json(), await first.response.json());
+});
+
+test("paid header correlation extracts only the shared resource locator and payer metadata", () => {
+  const locator = "abcdefghijklmnopqrstuvwxyzABCDEF";
+  const resourceUrl =
+    `https://processforgeai.xyz/api/agent/generate-sop?${REQUEST_REPLAY_QUERY_PARAM}=${locator}`;
+  const header = encodePaymentSignatureHeader({
+    x402Version: 2,
+    resource: {
+      url: resourceUrl,
+      description: "Generate a ProcessForge SOP",
+      mimeType: "application/json",
+    },
+    accepted: {
+      scheme: "exact",
+      network: "eip155:196",
+      asset: "0x1111111111111111111111111111111111111111",
+      amount: "10000",
+      payTo: "0x2222222222222222222222222222222222222222",
+      maxTimeoutSeconds: 300,
+      extra: {},
+    },
+    payload: {
+      signature: "not-logged",
+      authorization: {
+        from: "0x3333333333333333333333333333333333333333",
+      },
+    },
+  });
+  const request = new Request(
+    "https://processforgeai.xyz/api/agent/generate-sop",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "payment-signature": header,
+        "x-correlation-test": "present",
+      },
+    },
+  );
+
+  const correlation = inspectPaidRequestCorrelation(request);
+  assert.equal(correlation.decoded, true);
+  assert.equal(correlation.paymentResourceUrl, resourceUrl);
+  assert.equal(correlation.paymentResourceLocator, locator);
+  assert.equal(
+    correlation.payerAddress,
+    "0x3333333333333333333333333333333333333333",
+  );
+  assert.deepEqual(correlation.paymentPayloadKeys, [
+    "accepted",
+    "payload",
+    "resource",
+    "x402Version",
+  ]);
+  assert.ok(correlation.headerNames.includes("payment-signature"));
+  assert.ok(!JSON.stringify(correlation).includes("not-logged"));
 });
 
 test("route handler rejects middleware continuation responses", async () => {
@@ -351,7 +520,17 @@ test("payment gate remains official, synchronous, reserved, and production-bound
 
 test("route owns one body read and proxy only refreshes Supabase session", () => {
   assert.equal((routeSource.match(/await request\.text\(\)/g) ?? []).length, 1);
-  assert.match(routeSource, /runOfficialPaymentGate\(request, bodyText, replayLocator\)/);
+  assert.match(routeSource, /runOfficialPaymentGate\(/);
+  assert.match(routeSource, /resolveAgentRequestPayload/);
+  assert.ok(
+    routeSource.indexOf("resolveAgentRequestPayload")
+      < routeSource.indexOf("runOfficialPaymentGate("),
+  );
+  assert.match(paymentGateSource, /claimAgentRequestPayload/);
+  assert.ok(
+    paymentGateSource.indexOf("claimAgentRequestPayload({")
+      < paymentGateSource.indexOf("reserveVerifiedPaymentAtomic({"),
+  );
   assert.match(routeSource, /ensureRouteHandlerResponse\(paymentResult\.response, fallbackRequestId\)/);
   assert.match(routeSource, /JSON\.parse\(bodyText\)/);
   assert.doesNotMatch(proxySource, /x402|runOfficialPayment/);
@@ -363,9 +542,11 @@ test("route owns one body read and proxy only refreshes Supabase session", () =>
     "request_payload_stored",
     "empty_paid_body_detected",
     "request_payload_restored",
-    "request_payload_consumed",
     "replay_payload_missing",
+    "replay_payload_ambiguous",
+    "x402_request_shape",
   ]) {
     assert.match(routeSource, new RegExp(`securityLog\\("${event}"`));
   }
+  assert.match(paymentGateSource, /securityLog\("request_payload_consumed"/);
 });

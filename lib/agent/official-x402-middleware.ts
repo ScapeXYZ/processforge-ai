@@ -10,6 +10,7 @@ import { getAppBaseUrl } from "@/lib/env/server";
 import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
 import {
+  claimAgentRequestPayload,
   reserveVerifiedPaymentAtomic,
   updatePaymentSettlement,
   updateAgentRequest,
@@ -37,6 +38,11 @@ type PaymentRequestContext = {
   replayDecision?: "new" | "completed" | "busy" | "resume" | "conflict";
   storedResponse?: Record<string, unknown> | null;
   replayLocator: string | null;
+  requestPayloadClaim: {
+    replayKey: string;
+    authorizationHash: string;
+    endpoint: string;
+  } | null;
 };
 
 const PAYMENT_ROUTE = "/api/agent/generate-sop";
@@ -56,6 +62,7 @@ export async function runOfficialPaymentGate(
   request: Request,
   bodyText: string,
   replayLocator: string | null = null,
+  requestPayloadClaim: PaymentRequestContext["requestPayloadClaim"] = null,
 ): Promise<OfficialPaymentGateResult> {
   const config = getOfficialPaymentConfig();
   if (config.requested && !config.ready) {
@@ -90,6 +97,7 @@ export async function runOfficialPaymentGate(
       xPaymentHeaderPresent,
       middlewareResult: "challenge",
       replayLocator,
+      requestPayloadClaim,
     };
     const gateResponse = await requestContext.run(challengeContext, () => routeGate(paymentRequest));
     const response = ensureRouteHandlerResponse(gateResponse, challengeContext.requestId);
@@ -104,6 +112,7 @@ export async function runOfficialPaymentGate(
     xPaymentHeaderPresent,
     middlewareResult: "challenge",
     replayLocator,
+    requestPayloadClaim,
   };
   const gateResponse = await requestContext.run(paidContext, () => routeGate(paymentRequest));
   const response = ensureRouteHandlerResponse(gateResponse, paidContext.requestId);
@@ -214,6 +223,23 @@ function createOfficialRouteGate() {
     });
     if (!identity || !context.requestHash) {
       throw new Error("VERIFIED_PAYMENT_IDENTITY_MISSING");
+    }
+    if (context.requestPayloadClaim) {
+      const claim = await claimAgentRequestPayload({
+        endpoint: context.requestPayloadClaim.endpoint,
+        authorizationHash: context.requestPayloadClaim.authorizationHash,
+        replayKey: context.requestPayloadClaim.replayKey,
+        payerAddress: identity.payer,
+        createdAfter: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      });
+      if (claim.status !== "found") {
+        throw new Error("REQUEST_PAYLOAD_CLAIM_FAILED");
+      }
+      securityLog("request_payload_consumed", {
+        route: PAYMENT_ROUTE,
+        before_settlement: true,
+        verified_payer_exists: true,
+      });
     }
     const reservation = await reserveVerifiedPaymentAtomic({
       replay_key: identity.replayKey,

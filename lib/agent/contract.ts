@@ -22,7 +22,7 @@ export type AgentErrorCode =
   | "PAYMENT_CONFIGURATION_ERROR" | "PAYMENT_INVALID" | "PAYMENT_REPLAYED"
   | "PAYMENT_SETTLEMENT_FAILED" | "PAYMENT_SETTLEMENT_PENDING"
   | "PAYMENT_REPLAY_CONFLICT" | "REQUEST_IN_PROGRESS"
-  | "REPLAY_PAYLOAD_UNAVAILABLE"
+  | "REPLAY_PAYLOAD_UNAVAILABLE" | "REPLAY_PAYLOAD_AMBIGUOUS"
   | "RATE_LIMITED" | "SERVICE_BUSY" | "AI_TIMEOUT" | "GENERATION_FAILED";
 
 export function agentError(code: AgentErrorCode, message: string, status: number, requestId?: string, diagnostics?: { reason?: string; reason_message?: string }) {

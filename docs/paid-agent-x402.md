@@ -1,6 +1,6 @@
 # ProcessForge paid agent (x402)
 
-`POST /api/agent/generate-sop` is a machine-callable paid service. The route reads and validates an unpaid JSON body before issuing an HTTP `402` challenge. A validated payload is held in durable temporary storage for 10 minutes, keyed by an opaque locator embedded in the challenge's signed resource URL. The official OKX facilitator verifies and settles a proof-bearing retry before OpenAI generation starts.
+`POST /api/agent/generate-sop` is a machine-callable paid service. The route reads and validates an unpaid JSON body before issuing an HTTP `402` challenge. A validated payload is held in durable temporary storage for 10 minutes. The primary paid-retry correlation value is the resource URL copied from the challenge into the standard x402 payment payload. If a buyer omits that value from the HTTP replay URL, the server reads it from the payment payload. If no locator is available there either, the server restores only when exactly one unconsumed payload exists for the same endpoint in the 10-minute window; zero matches fail unavailable and multiple matches fail ambiguous. The official OKX facilitator verifies the payment, atomically claims the restored payload by payment-authorization hash, and only then settles before OpenAI generation starts.
 
 ## Request
 
@@ -12,9 +12,9 @@ curl -i -X POST "$PROCESSFORGE_URL/api/agent/generate-sop" \
   --data '{"title":"Invoice approval","description":"When an invoice arrives, Accounting validates and approves it within two business days.","industry":"Finance","department":"Accounting","audience":"Accounts payable","output_format":"json"}'
 ```
 
-Decode the `payment-required` header with an x402-compatible client and authorize the advertised payment without changing the signed resource URL, amount, asset, recipient, or network. A paid retry may resend the identical JSON body. If a compatible client sends an empty paid-retry body, the server restores the validated payload using the locator in the signed resource URL. Missing or expired replay state fails before a second settlement attempt.
+Decode the `payment-required` header with an x402-compatible client and authorize the advertised payment without changing the resource URL, amount, asset, recipient, or network. A paid retry may resend the identical JSON body. If a compatible client sends an empty paid-retry body, the server restores the validated payload from the payment payload's resource URL or the exactly-one recent-endpoint fallback. Missing, expired, or ambiguous replay state fails before settlement.
 
-Successful JSON includes `request_id`, `service`, `status`, `sop`, deterministic `analytics`, deterministic `compliance`, `assumptions`, `warnings`, `generated_at`, `processing_time_ms`, and `schema_version`. Stable error codes include `INVALID_REQUEST`, `PAYMENT_REQUIRED`, `PAYMENT_INVALID`, `PAYMENT_SETTLEMENT_FAILED`, `PAYMENT_REPLAY_CONFLICT`, `REQUEST_IN_PROGRESS`, `REPLAY_PAYLOAD_UNAVAILABLE`, `RATE_LIMITED`, `SERVICE_BUSY`, `AI_TIMEOUT`, and `GENERATION_FAILED`.
+Successful JSON includes `request_id`, `service`, `status`, `sop`, deterministic `analytics`, deterministic `compliance`, `assumptions`, `warnings`, `generated_at`, `processing_time_ms`, and `schema_version`. Stable error codes include `INVALID_REQUEST`, `PAYMENT_REQUIRED`, `PAYMENT_INVALID`, `PAYMENT_SETTLEMENT_FAILED`, `PAYMENT_REPLAY_CONFLICT`, `REQUEST_IN_PROGRESS`, `REPLAY_PAYLOAD_UNAVAILABLE`, `REPLAY_PAYLOAD_AMBIGUOUS`, `RATE_LIMITED`, `SERVICE_BUSY`, `AI_TIMEOUT`, and `GENERATION_FAILED`.
 
 ## Configuration
 

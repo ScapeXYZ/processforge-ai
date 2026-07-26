@@ -43,12 +43,19 @@ export type AgentRequestClaim = {
 
 export type AgentRequestPayloadRecord = {
   replay_key: string;
+  endpoint: string;
+  payer_address: string | null;
   request_hash: string;
   body_text: string;
   expires_at: string;
   consumed_at: string | null;
   consumed_authorization_hash: string | null;
 };
+
+export type AgentRequestPayloadClaim =
+  | { status: "found"; matchCount: 1; payload: AgentRequestPayloadRecord }
+  | { status: "unavailable"; matchCount: 0; payload: null }
+  | { status: "ambiguous"; matchCount: number; payload: null };
 
 function database() {
   const client = createAdminClient();
@@ -68,6 +75,8 @@ export async function findAgentRequest(idempotencyKey: string): Promise<AgentReq
 
 export async function storeAgentRequestPayload(row: {
   replay_key: string;
+  endpoint: string;
+  payer_address?: string | null;
   request_hash: string;
   body_text: string;
   expires_at: string;
@@ -81,46 +90,78 @@ export async function storeAgentRequestPayload(row: {
   if (error) throw new Error(`REQUEST_PAYLOAD_INSERT_${error.code}`);
 }
 
-export async function findAgentRequestPayload(
-  replayKey: string,
-  authorizationHash: string,
-): Promise<AgentRequestPayloadRecord | null> {
-  const { data, error } = await database()
-    .from("agent_request_payloads")
-    .select("replay_key,request_hash,body_text,expires_at,consumed_at,consumed_authorization_hash")
-    .eq("replay_key", replayKey)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-  if (error) throw new Error(`REQUEST_PAYLOAD_LOOKUP_${error.code}`);
-  const record = data as AgentRequestPayloadRecord | null;
-  if (
-    record?.consumed_at
-    && record.consumed_authorization_hash !== authorizationHash
-  ) {
-    return null;
+export async function resolveAgentRequestPayload(input: {
+  endpoint: string;
+  authorizationHash: string;
+  replayKey?: string | null;
+  payerAddress?: string | null;
+  createdAfter: string;
+}): Promise<AgentRequestPayloadClaim> {
+  const { data, error } = await database().rpc("resolve_agent_request_payload", {
+    p_endpoint: input.endpoint,
+    p_authorization_hash: input.authorizationHash,
+    p_replay_key: input.replayKey ?? null,
+    p_payer_address: input.payerAddress ?? null,
+    p_created_after: input.createdAfter,
+  });
+  if (error) throw new Error(`REQUEST_PAYLOAD_RESOLVE_${error.code}`);
+  const result = Array.isArray(data) ? data[0] : data;
+  const matchCount = Number(result?.match_count ?? 0);
+  if (result?.match_status === "found" && result?.replay_key) {
+    return {
+      status: "found",
+      matchCount: 1,
+      payload: {
+        replay_key: result.replay_key,
+        endpoint: result.endpoint,
+        payer_address: result.payer_address,
+        request_hash: result.request_hash,
+        body_text: result.body_text,
+        expires_at: result.expires_at,
+        consumed_at: result.consumed_at,
+        consumed_authorization_hash: result.consumed_authorization_hash,
+      },
+    };
   }
-  return record;
+  if (result?.match_status === "ambiguous") {
+    return { status: "ambiguous", matchCount, payload: null };
+  }
+  return { status: "unavailable", matchCount: 0, payload: null };
 }
 
-export async function consumeAgentRequestPayload(
-  replayKey: string,
-  authorizationHash: string,
-): Promise<void> {
-  const { data, error } = await database()
-    .from("agent_request_payloads")
-    .update({
-      consumed_at: new Date().toISOString(),
-      consumed_authorization_hash: authorizationHash,
-    })
-    .eq("replay_key", replayKey)
-    .is("consumed_at", null)
-    .select("replay_key")
-    .maybeSingle();
-  if (error) throw new Error(`REQUEST_PAYLOAD_CONSUME_${error.code}`);
-  if (!data) {
-    const existing = await findAgentRequestPayload(replayKey, authorizationHash);
-    if (!existing?.consumed_at) throw new Error("REQUEST_PAYLOAD_CONSUME_MISSING");
+export async function claimAgentRequestPayload(input: {
+  endpoint: string;
+  authorizationHash: string;
+  replayKey: string;
+  payerAddress?: string | null;
+  createdAfter: string;
+}): Promise<AgentRequestPayloadClaim> {
+  const { data, error } = await database().rpc("claim_agent_request_payload", {
+    p_endpoint: input.endpoint,
+    p_authorization_hash: input.authorizationHash,
+    p_replay_key: input.replayKey,
+    p_payer_address: input.payerAddress ?? null,
+    p_created_after: input.createdAfter,
+  });
+  if (error) throw new Error(`REQUEST_PAYLOAD_CLAIM_${error.code}`);
+  const result = Array.isArray(data) ? data[0] : data;
+  if (result?.match_status === "found" && result?.replay_key) {
+    return {
+      status: "found",
+      matchCount: 1,
+      payload: {
+        replay_key: result.replay_key,
+        endpoint: result.endpoint,
+        payer_address: result.payer_address,
+        request_hash: result.request_hash,
+        body_text: result.body_text,
+        expires_at: result.expires_at,
+        consumed_at: result.consumed_at,
+        consumed_authorization_hash: result.consumed_authorization_hash,
+      },
+    };
   }
+  return { status: "unavailable", matchCount: 0, payload: null };
 }
 
 export async function reserveVerifiedPaymentAtomic(

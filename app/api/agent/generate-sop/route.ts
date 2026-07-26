@@ -8,17 +8,18 @@ import {
   type OfficialPaymentGateResult,
 } from "@/lib/agent/official-x402-middleware";
 import {
-  consumeAgentRequestPayload,
-  findAgentRequestPayload,
   recordUsage,
+  resolveAgentRequestPayload,
   storeAgentRequestPayload,
   updateAgentRequest,
 } from "@/lib/agent/payment-store";
 import { acquireGenerationSlot, checkAgentRateLimit } from "@/lib/agent/rate-limit";
 import { validateAgentRequestPayload } from "@/lib/agent/request-validation";
 import {
+  canonicalReplayEndpoint,
   createRequestReplayLocator,
   deriveRequestReplayKey,
+  inspectPaidRequestCorrelation,
   paymentAuthorizationHash,
   readRequestReplayLocator,
   REQUEST_REPLAY_TTL_MS,
@@ -56,30 +57,77 @@ export async function POST(request: Request) {
   const paidRequest =
     request.headers.has("payment-signature")
     || request.headers.has("x-payment");
+  const correlation = inspectPaidRequestCorrelation(request);
   const authorizationHash = paymentAuthorizationHash(request);
-  let replayLocator = readRequestReplayLocator(request.url);
+  const requestUrlLocator = readRequestReplayLocator(request.url);
+  let replayLocator =
+    requestUrlLocator
+    ?? correlation.paymentResourceLocator;
   let replayKey = replayLocator ? deriveRequestReplayKey(replayLocator) : null;
   let restoredPayload = false;
+  const requestEndpoint = canonicalReplayEndpoint(request.url);
+  const correlationEndpoint = correlation.paymentResourceUrl
+    ? canonicalReplayEndpoint(correlation.paymentResourceUrl)
+    : requestEndpoint;
+
+  securityLog("x402_request_shape", {
+    phase: paidRequest ? "paid_retry" : "initial_unpaid",
+    route: "/api/agent/generate-sop",
+    method: request.method,
+    header_names: correlation.headerNames,
+    body_byte_count: new TextEncoder().encode(bodyText).byteLength,
+    body_empty: bodyText.trim().length === 0,
+    payment_header_kind: correlation.paymentHeaderKind ?? "none",
+    payment_payload_decoded: correlation.decoded,
+    payment_payload_keys: correlation.paymentPayloadKeys,
+    request_url_locator_present: Boolean(requestUrlLocator),
+    payment_resource_present: Boolean(correlation.paymentResourceUrl),
+    payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
+    payer_exists: Boolean(correlation.payerAddress),
+  });
 
   if (paidRequest && bodyText.trim().length === 0) {
     securityLog("empty_paid_body_detected", {
       request_id: fallbackRequestId,
       route: "/api/agent/generate-sop",
-      replay_locator_present: Boolean(replayLocator),
+      request_url_locator_present: Boolean(requestUrlLocator),
+      payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
     });
-    let stored = null;
+    let claim = null;
     try {
-      stored = replayKey && authorizationHash
-        ? await findAgentRequestPayload(replayKey, authorizationHash)
+      claim = authorizationHash
+        ? await resolveAgentRequestPayload({
+          endpoint: correlationEndpoint,
+          authorizationHash,
+          replayKey,
+          payerAddress: correlation.payerAddress,
+          createdAfter: new Date(Date.now() - REQUEST_REPLAY_TTL_MS).toISOString(),
+        })
         : null;
     } catch {
       // Treat unavailable durable storage exactly like an expired/missing payload.
     }
-    if (!stored) {
+    if (claim?.status === "ambiguous") {
+      securityLog("replay_payload_ambiguous", {
+        request_id: fallbackRequestId,
+        route: "/api/agent/generate-sop",
+        match_count: claim.matchCount,
+        payer_exists: Boolean(correlation.payerAddress),
+      });
+      return agentError(
+        "REPLAY_PAYLOAD_AMBIGUOUS",
+        "The paid request body was empty and multiple recent payloads matched. No payment was settled.",
+        409,
+        fallbackRequestId,
+      );
+    }
+    if (claim?.status !== "found") {
       securityLog("replay_payload_missing", {
         request_id: fallbackRequestId,
         route: "/api/agent/generate-sop",
-        replay_locator_present: Boolean(replayLocator),
+        request_url_locator_present: Boolean(requestUrlLocator),
+        payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
+        payer_exists: Boolean(correlation.payerAddress),
       });
       return agentError(
         "REPLAY_PAYLOAD_UNAVAILABLE",
@@ -88,6 +136,8 @@ export async function POST(request: Request) {
         fallbackRequestId,
       );
     }
+    const stored = claim.payload;
+    replayKey = stored.replay_key;
     bodyText = stored.body_text;
     restoredPayload = true;
     securityLog("request_payload_restored", {
@@ -141,6 +191,8 @@ export async function POST(request: Request) {
     try {
       await storeAgentRequestPayload({
         replay_key: replayKey,
+        endpoint: requestEndpoint,
+        payer_address: correlation.payerAddress,
         request_hash: validated.requestHash,
         body_text: bodyText,
         expires_at: new Date(Date.now() + REQUEST_REPLAY_TTL_MS).toISOString(),
@@ -165,7 +217,14 @@ export async function POST(request: Request) {
     });
   }
 
-  const paymentResult = await runOfficialPaymentGate(request, bodyText, replayLocator);
+  const paymentResult = await runOfficialPaymentGate(
+    request,
+    bodyText,
+    replayLocator,
+    restoredPayload
+      ? restoredPayloadCorrelation(replayKey, authorizationHash, correlationEndpoint)
+      : null,
+  );
   if (paymentResult.type === "response") {
     if (isNextContinuationResponse(paymentResult.response)) {
       securityLog("route_continuation_rejected", {
@@ -220,21 +279,6 @@ export async function POST(request: Request) {
       processing_time_ms: duration,
       completed_at: completedAt,
     });
-    if (replayKey && authorizationHash) {
-      try {
-        await consumeAgentRequestPayload(replayKey, authorizationHash);
-        securityLog("request_payload_consumed", {
-          request_id: requestId,
-          route: "/api/agent/generate-sop",
-          restored_payload: restoredPayload,
-        });
-      } catch {
-        securityLog("request_payload_consume_failed", {
-          request_id: requestId,
-          route: "/api/agent/generate-sop",
-        });
-      }
-    }
     await recordUsage({
       request_id: requestId,
       service: AGENT_SERVICE,
@@ -291,6 +335,16 @@ export async function POST(request: Request) {
   } finally {
     release();
   }
+}
+
+function restoredPayloadCorrelation(
+  replayKey: string | null,
+  authorizationHash: string | null,
+  endpoint: string,
+) {
+  return replayKey && authorizationHash
+    ? { replayKey, authorizationHash, endpoint }
+    : null;
 }
 
 function withPaymentReceipt(
