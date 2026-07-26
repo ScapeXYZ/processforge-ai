@@ -57,6 +57,16 @@ export async function POST(request: Request) {
   try {
     payload = JSON.parse(bodyText);
   } catch {
+    securityLog("request_body_parse_failed", {
+      request_id: fallbackRequestId,
+      route: "/api/agent/generate-sop",
+      method: request.method,
+      body_byte_count: new TextEncoder().encode(bodyText).byteLength,
+      body_empty: bodyText.trim().length === 0,
+      declared_mime_kind: request.headers.get("content-type"),
+      first_non_whitespace_character: [...bodyText.trim()][0] ?? null,
+      payment_signature_present: request.headers.has("payment-signature"),
+    });
     return agentError("INVALID_REQUEST", "Request body must be valid JSON.", 400, fallbackRequestId);
   }
   const validated = validateAgentRequestPayload(
