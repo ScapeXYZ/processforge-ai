@@ -28,6 +28,14 @@ export function deriveRequestReplayKey(locator: string): string {
     .digest("hex");
 }
 
+export function normalizedReplayLocatorFingerprint(locator: string | null): string | null {
+  if (!locator || !REPLAY_LOCATOR_PATTERN.test(locator)) return null;
+  return createHash("sha256")
+    .update(`processforge:x402-locator-log:${locator}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
 export function paymentAuthorizationHash(request: Request): string | null {
   const authorization =
     request.headers.get("payment-signature")

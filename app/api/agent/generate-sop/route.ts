@@ -20,11 +20,16 @@ import {
   createRequestReplayLocator,
   deriveRequestReplayKey,
   inspectPaidRequestCorrelation,
+  normalizedReplayLocatorFingerprint,
   paymentAuthorizationHash,
   readRequestReplayLocator,
   REQUEST_REPLAY_TTL_MS,
 } from "@/lib/agent/request-payload-replay";
-import { AGENT_SCHEMA_VERSION, AGENT_SERVICE } from "@/lib/agent/service";
+import {
+  AGENT_SCHEMA_VERSION,
+  AGENT_SERVICE,
+  PRODUCTION_ORIGIN,
+} from "@/lib/agent/service";
 import {
   ensureRouteHandlerResponse,
   isNextContinuationResponse,
@@ -65,11 +70,15 @@ export async function POST(request: Request) {
     requestUrlLocator
     ?? correlation.paymentResourceLocator;
   let replayKey = replayLocator ? deriveRequestReplayKey(replayLocator) : null;
+  const locatorFingerprint = normalizedReplayLocatorFingerprint(replayLocator);
   let restoredPayload = false;
   const requestEndpoint = canonicalReplayEndpoint(request.url);
+  const canonicalServiceEndpoint = canonicalReplayEndpoint(
+    new URL("/api/agent/generate-sop", PRODUCTION_ORIGIN).toString(),
+  );
   const correlationEndpoint = correlation.paymentResourceUrl
     ? canonicalReplayEndpoint(correlation.paymentResourceUrl)
-    : requestEndpoint;
+    : canonicalServiceEndpoint;
 
   securityLog("x402_request_shape", {
     phase: paidRequest ? "paid_retry" : "initial_unpaid",
@@ -84,6 +93,8 @@ export async function POST(request: Request) {
     request_url_locator_present: Boolean(requestUrlLocator),
     payment_resource_present: Boolean(correlation.paymentResourceUrl),
     payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
+    locator_fingerprint: locatorFingerprint,
+    inbound_endpoint_matches_canonical: requestEndpoint === canonicalServiceEndpoint,
     payer_exists: Boolean(correlation.payerAddress),
   });
 
@@ -111,6 +122,7 @@ export async function POST(request: Request) {
       route: "/api/agent/generate-sop",
       request_url_locator_present: Boolean(requestUrlLocator),
       payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
+      locator_fingerprint: locatorFingerprint,
     });
     let claim = null;
     try {
@@ -146,6 +158,7 @@ export async function POST(request: Request) {
         route: "/api/agent/generate-sop",
         request_url_locator_present: Boolean(requestUrlLocator),
         payment_resource_locator_present: Boolean(correlation.paymentResourceLocator),
+        locator_fingerprint: locatorFingerprint,
         payer_exists: Boolean(correlation.payerAddress),
       });
       return agentError(
@@ -208,11 +221,12 @@ export async function POST(request: Request) {
       request_id: fallbackRequestId,
       route: "/api/agent/generate-sop",
       request_hash: validated.requestHash,
+      locator_fingerprint: normalizedReplayLocatorFingerprint(replayLocator),
     });
     try {
       await storeAgentRequestPayload({
         replay_key: replayKey,
-        endpoint: requestEndpoint,
+        endpoint: canonicalServiceEndpoint,
         payer_address: correlation.payerAddress,
         request_hash: validated.requestHash,
         body_text: bodyText,
@@ -234,6 +248,7 @@ export async function POST(request: Request) {
       request_id: fallbackRequestId,
       route: "/api/agent/generate-sop",
       request_hash: validated.requestHash,
+      locator_fingerprint: normalizedReplayLocatorFingerprint(replayLocator),
       expires_in_seconds: REQUEST_REPLAY_TTL_MS / 1000,
     });
   }

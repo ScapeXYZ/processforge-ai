@@ -10,6 +10,7 @@ import {
 import { encodePaymentSignatureHeader } from "@okxweb3/x402-core/http";
 import {
   inspectPaidRequestCorrelation,
+  normalizedReplayLocatorFingerprint,
   REQUEST_REPLAY_QUERY_PARAM,
 } from "../lib/agent/request-payload-replay.ts";
 
@@ -28,6 +29,10 @@ const supabaseMiddlewareSource = readFileSync(
 );
 const identitySource = readFileSync(
   resolve("lib/agent/verified-payment-identity.ts"),
+  "utf8",
+);
+const locatorMigrationSource = readFileSync(
+  resolve("supabase/migrations/202607260003_x402_locator_authoritative.sql"),
   "utf8",
 );
 const metadata = JSON.parse(
@@ -332,6 +337,30 @@ test("paid retry uses the signed payment resource locator when the HTTP URL omit
   assert.equal(result.response.status, 200);
   assert.equal((await result.response.json()).sop.title, validRequestBody.title);
   assert.equal(endpoint.settlementCount, 1);
+});
+
+test("normalized locator fingerprint is stable and does not expose the locator", () => {
+  const locator = "abcdefghijklmnopqrstuvwxyzABCDEF";
+  const fingerprint = normalizedReplayLocatorFingerprint(locator);
+
+  assert.equal(fingerprint, normalizedReplayLocatorFingerprint(locator));
+  assert.match(fingerprint, /^[a-f0-9]{16}$/);
+  assert.notEqual(fingerprint, locator);
+  assert.equal(normalizedReplayLocatorFingerprint("invalid"), null);
+});
+
+test("database lookup treats the signed replay locator as authoritative", () => {
+  const resolveDirectBranch = locatorMigrationSource.match(
+    /if p_replay_key is not null then([\s\S]*?)else/,
+  )?.[1] ?? "";
+  const claimBody = locatorMigrationSource.match(
+    /create or replace function public\.claim_agent_request_payload([\s\S]*?)revoke all on function public\.resolve_agent_request_payload/,
+  )?.[1] ?? "";
+
+  assert.match(resolveDirectBranch, /arp\.replay_key = p_replay_key/);
+  assert.doesNotMatch(resolveDirectBranch, /arp\.endpoint = p_endpoint/);
+  assert.match(claimBody, /arp\.replay_key = p_replay_key/);
+  assert.doesNotMatch(claimBody, /arp\.endpoint = p_endpoint/);
 });
 
 test("paid retry prefers the unique recent payload matching the payer", async () => {
