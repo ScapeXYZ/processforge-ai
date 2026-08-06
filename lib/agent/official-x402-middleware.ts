@@ -11,6 +11,7 @@ import { getOfficialPaymentConfig } from "@/lib/agent/official-payment-config";
 import { LoggedOKXFacilitatorClient } from "@/lib/agent/logged-okx-facilitator-client";
 import {
   claimAgentRequestPayload,
+  PaymentPersistenceError,
   reserveVerifiedPaymentAtomic,
   updatePaymentSettlement,
   updateAgentRequest,
@@ -299,9 +300,13 @@ function createOfficialRouteGate() {
     }
     try {
       const settledAt = new Date().toISOString();
+      const transactionHash = typeof result.transaction === "string" && result.transaction.trim()
+        ? result.transaction
+        : null;
       await updatePaymentSettlement(context.requestId, {
-        transaction_hash: result.transaction,
-        settlement_reference: result.transaction,
+        ...(transactionHash
+          ? { transaction_hash: transactionHash, settlement_reference: transactionHash }
+          : {}),
         payer_address: result.payer ?? context.verifiedPayer ?? null,
         settlement_status: settlementStatus,
         settled_at: settlementStatus === "settled" ? settledAt : null,
@@ -327,10 +332,15 @@ function createOfficialRouteGate() {
         settlement_status: settlementStatus,
       });
     } catch (error) {
+      const persistenceError = error instanceof PaymentPersistenceError ? error : null;
       securityLog("payment_persistence_failed", {
         request_id: context.requestId,
         provider: config.provider,
-        error_name: error instanceof Error ? error.message.split("_").slice(0, 3).join("_") : "UnknownError",
+        error_name: persistenceError?.message ?? (error instanceof Error ? error.name : "UnknownError"),
+        error_code: persistenceError?.code ?? "UNKNOWN",
+        error_message: persistenceError?.providerMessage ?? "Settlement persistence failed outside the payment update.",
+        database_operation: persistenceError?.operation ?? "unknown",
+        database_table: persistenceError?.table ?? "unknown",
       });
     }
   });

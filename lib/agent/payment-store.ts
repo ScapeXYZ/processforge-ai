@@ -57,6 +57,18 @@ export type AgentRequestPayloadClaim =
   | { status: "unavailable"; matchCount: 0; payload: null }
   | { status: "ambiguous"; matchCount: number; payload: null };
 
+export class PaymentPersistenceError extends Error {
+  constructor(
+    public readonly code: string,
+    public readonly operation: "update",
+    public readonly table: "agent_payments",
+    public readonly providerMessage: string,
+  ) {
+    super("PAYMENT_SETTLEMENT_UPDATE");
+    this.name = "PaymentPersistenceError";
+  }
+}
+
 function database() {
   const client = createAdminClient();
   if (!client) throw new Error("PAYMENT_STORAGE_UNAVAILABLE");
@@ -221,7 +233,9 @@ export async function updatePaymentSettlement(
     .from("agent_payments")
     .update(patch)
     .eq("request_id", requestId);
-  if (error) throw new Error(`PAYMENT_SETTLEMENT_UPDATE_${error.code}`);
+  if (error) {
+    throw new PaymentPersistenceError(error.code, "update", "agent_payments", error.message);
+  }
 }
 
 export async function recordUsage(row: Record<string, unknown>): Promise<void> {
